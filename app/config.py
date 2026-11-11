@@ -29,6 +29,8 @@ class Settings:
     media_retention_hours: int = field(default_factory=lambda: int(os.getenv("MEDIA_RETENTION_HOURS", "48")))
     # How long after a planned posting time a slot is still considered due
     slot_window_minutes: int = field(default_factory=lambda: int(os.getenv("SLOT_WINDOW_MINUTES", "90")))
+    # Folder with the built web UI (Next.js static export). Default: app/web
+    web_dir: str = field(default_factory=lambda: os.getenv("WEB_DIR", ""))
 
     @property
     def db_path(self) -> Path:

@@ -15,7 +15,9 @@ Fehler → n8n-Error-Workflow → E-Mail
 ## Was der Container macht
 
 * **Weboberfläche** (`/`): Accounts, Posting-Zeiten, Subreddits mit Filtern (Sortierung, Upvotes,
-  Länge, NSFW), Caption-Vorlage, Hashtags, Verlauf und Vorschau-Rendering.
+  Länge, NSFW), Caption-Vorlage, Hashtags, Verlauf und Vorschau-Rendering. Gebaut mit Next.js im
+  Liquid-Glass-Stil ([`web/`](web), siehe unten). Volle Lichtbrechung nur in Chrome/Edge; Safari und
+  Firefox zeigen Blur und Ränder.
 * **Reddit**: offizielle API (App-only OAuth). Nimmt das Video mit den meisten Upvotes, das noch
   nie gepostet wurde (über alle Accounts hinweg, kein Video doppelt).
 * **Rendering** (ffmpeg): 1080×1920, Original mittig auf unscharfem Hintergrund, Titel als Hook
@@ -67,10 +69,28 @@ Alle `/api`-Aufrufe brauchen den Header `X-API-Key: <API_KEY>`. Doku: `/api/docs
 Ein Slot ist fällig, sobald seine Uhrzeit erreicht ist, für bis zu 90 Minuten
 (`SLOT_WINDOW_MINUTES`). Pro Slot gibt es höchstens 2 Versuche.
 
+## Weboberfläche (`web/`)
+
+Next.js 16 + React 19 + Tailwind 4 mit [`liquid-glass-react`](https://github.com/rdev/liquid-glass-react).
+Die Oberfläche wird als **statischer Export** gebaut (`output: "export"`): Node.js läuft nur beim
+Docker-Build (Stage 1), im fertigen Container liefert FastAPI nur noch HTML/JS/CSS aus. Der
+Mini-PC hat zur Laufzeit also keinen zusätzlichen Prozess. Der erste Build in Portainer dauert
+dadurch ein paar Minuten länger.
+
+* Glas-Komponenten: `web/components/glass/` (`GlassSurface`, nicht `LiquidGlass` direkt verwenden).
+* Daten holt die Oberfläche über `/ui-api/...` (gleicher Schutz wie die Seiten: Cloudflare Access
+  bzw. Basic Auth). Die n8n-API unter `/api/...` mit `X-API-Key` ist unverändert.
+* Alte Links `/accounts/<id>` leiten auf `/account?id=<id>` um.
+
 ## Entwicklung
 
 ```bash
 pip install -r requirements.txt pytest
 DATA_DIR=./data API_KEY=dev uvicorn app.main:app --reload --port 8080
 pytest
+
+# Oberfläche mit Hot Reload (leitet /ui-api, /api, /media an :8080 weiter)
+cd web && npm install && npm run dev        # http://localhost:3000
+# oder einmal bauen und von FastAPI ausliefern lassen
+cd web && npm run build && WEB_DIR=web/out uvicorn app.main:app --port 8080
 ```

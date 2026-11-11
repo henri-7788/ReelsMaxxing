@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% from "_status.html" import post_table %}
-{% block content %}
-<h1>Verlauf</h1>
-{% if info == 'preview' %}<p class="info">Vorschau wird im Hintergrund erstellt. Das dauert auf dem Mini-PC ein paar Minuten, lade die Seite dann neu.</p>{% endif %}
-{{ post_table(posts) }}
-{% endblock %}

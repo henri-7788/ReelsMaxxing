@@ -3,3 +3,7 @@ data
 tests
 __pycache__
 .env
+web/node_modules
+web/.next
+web/out
+app/web

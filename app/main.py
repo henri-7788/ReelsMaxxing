@@ -6,11 +6,10 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, Form, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import db, pipeline, scheduler
 from .config import settings
@@ -30,10 +29,12 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Reels-Manager", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
-templates = Jinja2Templates(directory=BASE / "templates")
+# Prebuilt Next.js static export (web/ -> `next build` -> copied here in the Dockerfile)
+WEB_DIR = Path(settings.web_dir) if settings.web_dir else BASE / "web"
+if (WEB_DIR / "_next").is_dir():
+    app.mount("/_next", StaticFiles(directory=WEB_DIR / "_next"), name="next-assets")
 
-PUBLIC_PREFIXES = ("/media/", "/health", "/static/", "/api/")
+PUBLIC_PREFIXES = ("/media/", "/health", "/api/")
 
 
 @app.middleware("http")
@@ -122,84 +123,123 @@ def api_cleanup():
     return {"removed": pipeline.cleanup_media()}
 
 
-# ------------------------------------------------------------------------ UI
-def _int(v, default=0) -> int:
-    try:
-        return int(v)
-    except (TypeError, ValueError):
-        return default
+# -------------------------------------------------------- UI (JSON for web/)
+# Same protection as the pages (basic auth / Cloudflare Access), not the n8n API key.
+ui = APIRouter(prefix="/ui-api")
+
+SORTS = {"top", "hot", "new", "rising"}
+TIME_FILTERS = {"hour", "day", "week", "month", "year", "all"}
 
 
-@app.get("/", response_class=HTMLResponse)
-def dashboard(request: Request):
-    accounts = db.list_accounts()
+class AccountBody(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    ig_user_id: str = ""
+    access_token: str = ""  # empty = keep the stored token
+    active: bool = True
+    posting_times: str = "18:00"
+    caption_template: str = "{title}"
+    hashtags: str = ""
+    hook_enabled: bool = True
+
+
+class SourceBody(BaseModel):
+    subreddit: str
+    sort: str = "top"
+    time_filter: str = "day"
+    min_score: int = 500
+    min_duration: int = 5
+    max_duration: int = 90
+    allow_nsfw: bool = False
+
+
+def _public_account(a: dict) -> dict:
+    """Never send the Instagram token to the browser."""
+    out = {k: v for k, v in a.items() if k != "access_token"}
+    out["has_token"] = bool(a.get("access_token"))
+    out["active"] = bool(a["active"])
+    out["hook_enabled"] = bool(a["hook_enabled"])
+    out["next_slot"] = scheduler.next_slot(a) if a["active"] else None
+    return out
+
+
+def _account_or_404(account_id: int) -> dict:
+    acc = db.get_account(account_id)
+    if not acc:
+        raise HTTPException(404, "Account nicht gefunden")
+    return acc
+
+
+@ui.get("/overview")
+def ui_overview():
+    accounts = [_public_account(a) for a in db.list_accounts()]
     for a in accounts:
         a["sources"] = db.list_sources(a["id"])
-    return templates.TemplateResponse(request, "dashboard.html", {
-        "accounts": accounts, "posts": db.list_posts(15), "due": scheduler.due_accounts(),
-    })
+    return {"accounts": accounts, "posts": db.list_posts(15), "due": scheduler.due_accounts(),
+            "stats": db.post_stats()}
 
 
-@app.get("/accounts/new", response_class=HTMLResponse)
-def account_new(request: Request):
-    return templates.TemplateResponse(request, "account.html", {"account": None, "sources": [], "error": None})
+@ui.get("/posts")
+def ui_posts(limit: int = 200):
+    return {"posts": db.list_posts(max(1, min(limit, 500)))}
 
 
-@app.get("/accounts/{account_id}", response_class=HTMLResponse)
-def account_edit(request: Request, account_id: int):
-    account = db.get_account(account_id)
-    if not account:
-        raise HTTPException(404)
-    return templates.TemplateResponse(request, "account.html", {
-        "account": account, "sources": db.list_sources(account_id),
-        "posts": db.list_posts(30, account_id), "error": None,
-    })
+@ui.get("/accounts/{account_id}")
+def ui_account(account_id: int):
+    acc = _account_or_404(account_id)
+    return {"account": _public_account(acc), "sources": db.list_sources(account_id),
+            "posts": db.list_posts(30, account_id)}
 
 
-@app.post("/accounts/save")
-def account_save(request: Request, account_id: str = Form(""), name: str = Form(...), ig_user_id: str = Form(""),
-                 access_token: str = Form(""), active: str = Form(""), posting_times: str = Form("18:00"),
-                 caption_template: str = Form(...), hashtags: str = Form(""), hook_enabled: str = Form("")):
+def _save(body: AccountBody, account_id: int | None) -> dict:
     try:
-        scheduler.parse_times(posting_times)
+        scheduler.parse_times(body.posting_times)
     except ValueError as e:
-        acc = db.get_account(_int(account_id)) if account_id else None
-        return templates.TemplateResponse(request, "account.html", {
-            "account": acc, "sources": db.list_sources(acc["id"]) if acc else [], "error": str(e)}, status_code=400)
-    data = {"name": name.strip(), "ig_user_id": ig_user_id.strip(), "active": 1 if active else 0,
-            "posting_times": posting_times.strip(), "caption_template": caption_template.replace("\r\n", "\n"),
-            "hashtags": hashtags.strip(), "hook_enabled": 1 if hook_enabled else 0}
-    if access_token.strip():
-        data["access_token"] = access_token.strip()
-    new_id = db.save_account(data, _int(account_id) if account_id else None)
-    return RedirectResponse(f"/accounts/{new_id}", status_code=303)
+        raise HTTPException(400, str(e))
+    data = {"name": body.name.strip(), "ig_user_id": body.ig_user_id.strip(), "active": int(body.active),
+            "posting_times": body.posting_times.strip(), "caption_template": body.caption_template.replace("\r\n", "\n"),
+            "hashtags": body.hashtags.strip(), "hook_enabled": int(body.hook_enabled)}
+    if body.access_token.strip():
+        data["access_token"] = body.access_token.strip()
+    new_id = db.save_account(data, account_id)
+    return _public_account(db.get_account(new_id))
 
 
-@app.post("/accounts/{account_id}/delete")
-def account_delete(account_id: int):
+@ui.post("/accounts")
+def ui_account_create(body: AccountBody):
+    return _save(body, None)
+
+
+@ui.put("/accounts/{account_id}")
+def ui_account_update(account_id: int, body: AccountBody):
+    _account_or_404(account_id)
+    return _save(body, account_id)
+
+
+@ui.delete("/accounts/{account_id}")
+def ui_account_delete(account_id: int):
     db.delete_account(account_id)
-    return RedirectResponse("/", status_code=303)
+    return {"ok": True}
 
 
-@app.post("/accounts/{account_id}/sources")
-def source_add(account_id: int, subreddit: str = Form(...), sort: str = Form("top"), time_filter: str = Form("day"),
-               min_score: str = Form("500"), min_duration: str = Form("5"), max_duration: str = Form("90"),
-               allow_nsfw: str = Form("")):
-    sub = subreddit.strip().removeprefix("r/").strip("/ ")
-    if sub:
-        db.add_source(account_id, {
-            "subreddit": sub, "sort": sort if sort in {"top", "hot", "new", "rising"} else "top",
-            "time_filter": time_filter if time_filter in {"hour", "day", "week", "month", "year", "all"} else "day",
-            "min_score": _int(min_score, 500), "min_duration": _int(min_duration, 5),
-            "max_duration": min(_int(max_duration, 90), 900), "allow_nsfw": 1 if allow_nsfw else 0,
-        })
-    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+@ui.post("/accounts/{account_id}/sources")
+def ui_source_add(account_id: int, body: SourceBody):
+    _account_or_404(account_id)
+    sub = body.subreddit.strip().removeprefix("r/").strip("/ ")
+    if not sub:
+        raise HTTPException(400, "Subreddit fehlt")
+    db.add_source(account_id, {
+        "subreddit": sub, "sort": body.sort if body.sort in SORTS else "top",
+        "time_filter": body.time_filter if body.time_filter in TIME_FILTERS else "day",
+        "min_score": max(0, body.min_score), "min_duration": max(0, body.min_duration),
+        "max_duration": min(max(1, body.max_duration), 900), "allow_nsfw": int(body.allow_nsfw),
+    })
+    return {"sources": db.list_sources(account_id)}
 
 
-@app.post("/sources/{source_id}/delete")
-def source_delete(source_id: int, account_id: int = Form(...)):
+@ui.delete("/sources/{source_id}")
+def ui_source_delete(source_id: int):
     db.delete_source(source_id)
-    return RedirectResponse(f"/accounts/{account_id}", status_code=303)
+    return {"ok": True}
 
 
 def _preview_job(account_id: int) -> None:
@@ -210,19 +250,69 @@ def _preview_job(account_id: int) -> None:
         log.warning("Vorschau für Account %s fehlgeschlagen: %s", account_id, e)
 
 
-@app.post("/accounts/{account_id}/preview")
-def account_preview(account_id: int):
+@ui.post("/accounts/{account_id}/preview")
+def ui_preview(account_id: int):
+    _account_or_404(account_id)
     threading.Thread(target=_preview_job, args=(account_id,), daemon=True).start()
-    return RedirectResponse("/posts?info=preview", status_code=303)
+    return {"started": True}
 
 
-@app.get("/posts", response_class=HTMLResponse)
-def posts(request: Request, info: str = ""):
-    return templates.TemplateResponse(request, "posts.html", {"posts": db.list_posts(200), "info": info})
+app.include_router(ui)
+
+
+# --------------------------------------------------------------- UI (pages)
+def _page(name: str):
+    path = WEB_DIR / name
+    if not path.is_file():
+        return HTMLResponse("Weboberfläche nicht gebaut (web/ → npm run build). Die API läuft trotzdem.",
+                            status_code=503)
+    return FileResponse(path, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
+def page_dashboard():
+    return _page("index.html")
+
+
+@app.api_route("/posts", methods=["GET", "HEAD"], response_class=HTMLResponse)
+def page_posts():
+    return _page("posts.html")
+
+
+@app.api_route("/account", methods=["GET", "HEAD"], response_class=HTMLResponse)
+def page_account():
+    return _page("account.html")
+
+
+# Old links from the previous UI
+@app.get("/accounts/new")
+def page_account_new():
+    return RedirectResponse("/account", status_code=307)
+
+
+@app.get("/accounts/{account_id}")
+def page_account_legacy(account_id: int):
+    return RedirectResponse(f"/account?id={account_id}", status_code=307)
+
+
+@app.api_route("/{path:path}", methods=["GET", "HEAD"])
+def web_file(path: str):
+    """Everything else of the export: icon, RSC payloads for client-side navigation (*.txt) ..."""
+    root = WEB_DIR.resolve()
+    target = (root / path).resolve()
+    if not target.is_relative_to(root) or not target.is_file() or target.suffix == ".html":
+        html = (root / f"{path}.html").resolve()
+        if path and html.is_relative_to(root) and html.is_file():
+            return _page(html.name if html.parent == root else str(html.relative_to(root)))
+        raise HTTPException(404)
+    return FileResponse(target)
 
 
 @app.exception_handler(404)
 def not_found(request: Request, exc):
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(("/api/", "/ui-api/", "/media/", "/_next/")):
         return JSONResponse({"detail": getattr(exc, "detail", "Not Found")}, status_code=404)
+    page = WEB_DIR / "404.html"
+    if page.is_file():
+        return HTMLResponse(page.read_text(encoding="utf-8"), status_code=404)
     return HTMLResponse("Nicht gefunden", status_code=404)
