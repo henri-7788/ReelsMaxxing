@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% from "_status.html" import post_table %}
+{% block content %}
+<h1>{{ account.name if account else 'Neuer Account' }}</h1>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<form method="post" action="/accounts/save" class="form">
+  <input type="hidden" name="account_id" value="{{ account.id if account else '' }}">
+  <label>Name <input name="name" required value="{{ account.name if account else '' }}"></label>
+  <label><input type="checkbox" name="active" value="1" {% if not account or account.active %}checked{% endif %}> Aktiv (automatisch posten)</label>
+  <label>Posting-Zeiten (HH:MM, durch Komma getrennt)
+    <input name="posting_times" value="{{ account.posting_times if account else '12:00, 18:30' }}" placeholder="09:00, 13:00, 19:30"></label>
+  <fieldset>
+    <legend>Instagram</legend>
+    <label>Instagram-User-ID (Business/Creator) <input name="ig_user_id" value="{{ account.ig_user_id if account else '' }}" placeholder="1784…"></label>
+    <label>Access Token {% if account and account.access_token %}<small>(gesetzt, leer lassen zum Behalten)</small>{% endif %}
+      <input name="access_token" type="password" autocomplete="off"></label>
+  </fieldset>
+  <fieldset>
+    <legend>Inhalt</legend>
+    <label><input type="checkbox" name="hook_enabled" value="1" {% if not account or account.hook_enabled %}checked{% endif %}> Titel als Hook-Text oben einblenden</label>
+    <label>Caption-Vorlage <small>Platzhalter: {title} {author} {subreddit} {permalink} {hashtags}</small>
+      <textarea name="caption_template" rows="6">{{ account.caption_template if account else '{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}' }}</textarea></label>
+    <label>Hashtags <input name="hashtags" value="{{ account.hashtags if account else '' }}" placeholder="#funny #animals"></label>
+  </fieldset>
+  <button type="submit">Speichern</button>
+</form>
+
+{% if account %}
+<h2>Subreddits</h2>
+<table>
+  <thead><tr><th>Subreddit</th><th>Sortierung</th><th>Min. Upvotes</th><th>Länge (s)</th><th>NSFW</th><th></th></tr></thead>
+  <tbody>
+  {% for s in sources %}
+    <tr><td>r/{{ s.subreddit }}</td><td>{{ s.sort }}{% if s.sort == 'top' %} / {{ s.time_filter }}{% endif %}</td>
+      <td>{{ s.min_score }}</td><td>{{ s.min_duration }}–{{ s.max_duration }}</td><td>{{ 'ja' if s.allow_nsfw else 'nein' }}</td>
+      <td><form method="post" action="/sources/{{ s.id }}/delete"><input type="hidden" name="account_id" value="{{ account.id }}"><button class="link">entfernen</button></form></td></tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">Noch keine Subreddits.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+<form method="post" action="/accounts/{{ account.id }}/sources" class="inline-form">
+  <input name="subreddit" placeholder="z. B. aww" required>
+  <select name="sort"><option value="top">top</option><option value="hot">hot</option><option value="rising">rising</option><option value="new">new</option></select>
+  <select name="time_filter"><option value="day">Tag</option><option value="week">Woche</option><option value="month">Monat</option><option value="year">Jahr</option><option value="all">immer</option></select>
+  <input name="min_score" type="number" value="500" title="Min. Upvotes">
+  <input name="min_duration" type="number" value="5" title="Min. Sekunden">
+  <input name="max_duration" type="number" value="90" title="Max. Sekunden">
+  <label><input type="checkbox" name="allow_nsfw" value="1"> NSFW</label>
+  <button type="submit">Hinzufügen</button>
+</form>
+
+<h2>Testen</h2>
+<form method="post" action="/accounts/{{ account.id }}/preview"><button>Vorschau-Video rendern (wird nicht gepostet)</button></form>
+
+<h2>Verlauf</h2>
+{{ post_table(posts, show_account=False) }}
+
+<form method="post" action="/accounts/{{ account.id }}/delete" onsubmit="return confirm('Account wirklich löschen?')"><button class="danger">Account löschen</button></form>
+{% endif %}
+{% endblock %}

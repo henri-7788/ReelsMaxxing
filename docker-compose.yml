@@ -1,0 +1,39 @@
+# Portainer: Stacks -> Add stack -> Repository (this repo) or paste this file.
+# Fill in the variables under "Environment variables" in Portainer (see .env.example).
+services:
+  reels-manager:
+    build: .
+    image: reels-manager:latest
+    container_name: reels-manager
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL}
+      API_KEY: ${API_KEY}
+      UI_USER: ${UI_USER:-}
+      UI_PASSWORD: ${UI_PASSWORD:-}
+      REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
+      REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
+      REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-linux:reels-manager:v1.0}
+      ENCODER: ${ENCODER:-libx264}
+      TZ: Europe/Berlin
+    volumes:
+      - reels-data:/data
+    # For ENCODER=vaapi (Intel GPU) uncomment:
+    # devices:
+    #   - /dev/dri:/dev/dri
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    # If n8n runs in another stack, join its network so n8n can call http://reels-manager:8080
+    # networks: [n8n]
+
+volumes:
+  reels-data:
+
+# networks:
+#   n8n:
+#     external: true
+#     name: <name of n8n's network>
