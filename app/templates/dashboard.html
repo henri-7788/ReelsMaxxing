@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% from "_status.html" import post_table %}
+{% block content %}
+<h1>Accounts</h1>
+<div class="grid">
+{% for a in accounts %}
+  <a class="card {% if not a.active %}inactive{% endif %}" href="/accounts/{{ a.id }}">
+    <h2>{{ a.name }}</h2>
+    <p>{% if a.active %}✅ aktiv{% else %}⏸ pausiert{% endif %}{% if not a.ig_user_id or not a.access_token %} · ⚠️ Instagram nicht verbunden{% endif %}</p>
+    <p><b>Zeiten:</b> {{ a.posting_times }}</p>
+    <p><b>Subreddits:</b> {% for s in a.sources %}r/{{ s.subreddit }}{% if not loop.last %}, {% endif %}{% else %}<span class="muted">keine</span>{% endfor %}</p>
+  </a>
+{% else %}
+  <p class="muted">Noch keine Accounts. <a href="/accounts/new">Jetzt anlegen</a>.</p>
+{% endfor %}
+</div>
+{% if due %}<p class="info">Gerade fällig: {% for d in due %}{{ d.name }} ({{ d.slot }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+<h1>Letzte Videos</h1>
+{{ post_table(posts) }}
+{% endblock %}
