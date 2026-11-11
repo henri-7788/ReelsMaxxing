@@ -3,7 +3,8 @@
 services:
   reels-manager:
     build: .
-    image: reels-manager:latest
+    # Always build locally from this repo, never try to pull from a registry
+    pull_policy: build
     container_name: reels-manager
     restart: unless-stopped
     ports:
