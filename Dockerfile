@@ -1,3 +1,15 @@
+# ---- Stage 1: build the web UI (Next.js static export) ---------------------
+# Node is only needed here. The final image has no Node.js process, so the
+# Celeron N2930 only serves a few static files at runtime.
+FROM node:22-slim AS web
+WORKDIR /web
+ENV NEXT_TELEMETRY_DISABLED=1
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+# ---- Stage 2: runtime ------------------------------------------------------
 FROM python:3.12-slim
 
 # ffmpeg for rendering, DejaVu font for text, Intel VAAPI driver (Bay Trail / Celeron N2930) for optional GPU encoding
@@ -9,6 +21,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+COPY --from=web /web/out ./app/web
 
 ENV DATA_DIR=/data TZ=Europe/Berlin PYTHONUNBUFFERED=1
 VOLUME /data

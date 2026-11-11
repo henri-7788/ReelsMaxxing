@@ -192,3 +192,10 @@ def slot_taken(account_id: int, slot: str) -> bool:
     """A slot counts as used unless every attempt for it was skipped/failed before rendering finished."""
     return row("SELECT 1 AS x FROM posts WHERE account_id = ? AND slot = ? AND status IN"
                " ('rendering', 'ready', 'publishing', 'published')", (account_id, slot)) is not None
+
+
+def post_stats() -> dict:
+    """Counts for the dashboard: per status overall, published in the last 7 days."""
+    by_status = {r["status"]: r["n"] for r in rows("SELECT status, COUNT(*) AS n FROM posts GROUP BY status")}
+    week = row("SELECT COUNT(*) AS n FROM posts WHERE status = 'published' AND datetime(updated_at) >= datetime('now', '-7 days')")
+    return {"by_status": by_status, "published_7d": week["n"] if week else 0}

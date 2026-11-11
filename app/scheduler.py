@@ -55,3 +55,20 @@ def due_accounts(now: datetime | None = None) -> list[dict]:
         if slot:
             out.append({"account_id": acc["id"], "name": acc["name"], "slot": slot})
     return out
+
+
+def next_slot(account: dict, now: datetime | None = None) -> str | None:
+    """Next planned posting time (today or tomorrow) as 'YYYY-MM-DD HH:MM', for the UI."""
+    tz = ZoneInfo(settings.timezone)
+    now = now.astimezone(tz) if now else datetime.now(tz)
+    try:
+        times = parse_times(account["posting_times"])
+    except ValueError:
+        return None
+    for day in (0, 1):
+        base = now + timedelta(days=day)
+        for hh, mm in times:
+            planned = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
+            if planned > now:
+                return slot_key(planned)
+    return None
