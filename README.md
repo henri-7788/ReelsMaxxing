@@ -37,7 +37,7 @@ Fehler → n8n-Error-Workflow → E-Mail
    einkommentieren und den Netzwerknamen von n8n eintragen. n8n ruft dann
    `http://reels-manager:8080/api/...` auf (geht nicht über das Internet).
 4. **Cloudflare Tunnel**: Public Hostname, z. B. `reels.deinedomain.de` → `http://reels-manager:8080`
-   (bzw. `http://localhost:8080`). Diesen Wert als `PUBLIC_BASE_URL` setzen.
+   (bzw. `http://localhost:8090`, Host-Port über `HOST_PORT`, Standard 8090). Diesen Wert als `PUBLIC_BASE_URL` setzen.
 5. **Schutz der Oberfläche**: In Cloudflare Zero Trust eine Access-Application für
    `reels.deinedomain.de` (nur deine E-Mail) und eine zweite für `reels.deinedomain.de/media`
    mit Policy **Bypass → Everyone**, sonst kann Instagram die Videos nicht laden.
