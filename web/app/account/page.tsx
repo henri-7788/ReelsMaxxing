@@ -111,24 +111,24 @@ export default function AccountPage() {
     load()
   }, [load])
 
-  // Back from Instagram Login (/api/instagram/callback redirects here with ?ig=connected|error)
+  // Back from the Meta login (/api/instagram/callback redirects here with ?ig=connected|error)
   const igHandled = useRef<string | null>(null)
   useEffect(() => {
     const ig = params.get("ig")
     if (!ig || igHandled.current === params.toString()) return
     igHandled.current = params.toString()
-    if (ig === "connected") toast("Instagram verbunden")
+    if (ig === "connected") toast(params.get("ig_message") || "Instagram verbunden")
     else toast(`Instagram-Verbindung fehlgeschlagen: ${params.get("ig_message") ?? "unbekannter Fehler"}`, "error")
     reloadAll()
     router.replace(id ? `/account?id=${id}` : "/account", { scroll: false })
   }, [params, id, router, toast, reloadAll])
 
-  async function igAction(action: "refresh" | "disconnect") {
+  async function disconnectInstagram() {
     if (!id) return
     try {
-      const res = await api<Account>(`/accounts/${id}/instagram/${action}`, { method: "POST" })
+      const res = await api<Account>(`/accounts/${id}/instagram/disconnect`, { method: "POST" })
       setAccount(res)
-      toast(action === "refresh" ? "Token erneuert" : "Instagram getrennt")
+      toast("Instagram getrennt")
       reloadAll()
     } catch (e) {
       toast((e as Error).message, "error")
@@ -222,7 +222,7 @@ export default function AccountPage() {
   )
   const daysLeft = account ? tokenDaysLeft(account) : null
   const instagram = (
-    <Panel title="Instagram" sub="Business- oder Creator-Account, über Instagram Login verbunden">
+    <Panel title="Instagram" sub="Professionelles Instagram-Konto, verbunden per Login mit Instagram oder Facebook">
       {account ? (
         <div className="flex flex-wrap items-center gap-3">
           <div className="min-w-48 flex-1">
@@ -230,18 +230,15 @@ export default function AccountPage() {
               <>
                 <p className="font-medium text-ink">{account.ig_username ? `@${account.ig_username}` : `ID ${account.ig_user_id}`}</p>
                 <p className="caption">
-                  {daysLeft === null ? "Token manuell eingetragen, Ablauf unbekannt" : daysLeft < 0 ? "Token abgelaufen, bitte neu verbinden" : `Token gültig noch ${daysLeft} Tage, wird automatisch erneuert`}
+                  {daysLeft === null ? "Token läuft nicht ab" : daysLeft < 0 ? "Token abgelaufen, bitte neu verbinden" : `Token gültig noch ${daysLeft} Tage`}
                 </p>
               </>
             ) : <p className="caption">Noch nicht verbunden. Reels werden vorbereitet, aber nicht gepostet.</p>}
           </div>
           <a className={connected ? "btn btn-sm" : "btn btn-primary"} href={instagramConnectUrl(account.id)}>{connected ? "Neu verbinden" : "Mit Instagram verbinden"}</a>
-          {connected && <Menu items={[
-            ...(daysLeft !== null ? [{ label: "Token jetzt erneuern", onSelect: () => igAction("refresh") }] : []),
-            { label: "Instagram trennen", danger: true, onSelect: () => igAction("disconnect") },
-          ]} />}
+          {connected && <Menu items={[{ label: "Instagram trennen", danger: true, onSelect: disconnectInstagram }]} />}
         </div>
-      ) : <p className="caption">Nach dem Anlegen verbindest du den Account mit einem Klick über Instagram Login.</p>}
+      ) : <p className="caption">Nach dem Anlegen verbindest du den Account mit einem Klick über Instagram oder Facebook.</p>}
       <details className="group">
         <summary className="cursor-pointer text-[13px] text-ink-3">Token manuell eintragen</summary>
         <div className="mt-3 flex flex-col gap-4">

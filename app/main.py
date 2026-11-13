@@ -28,7 +28,6 @@ async def lifespan(_app: FastAPI):
     db.init_db()
     pipeline.cleanup_media()
     system.start_sampler()
-    instagram.start_refresher()
     yield
 
 
@@ -137,7 +136,7 @@ def _back_to_ui(account_id: int | None, result: str, message: str = "") -> Redir
 @app.get("/api/instagram/callback")
 def api_instagram_callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
     if not instagram.configured():
-        raise HTTPException(503, "IG_APP_ID / IG_APP_SECRET sind nicht gesetzt")
+        raise HTTPException(503, "META_APP_ID / META_APP_SECRET / META_CONFIG_ID sind nicht gesetzt")
     try:
         account_id = instagram.read_state(state)
     except instagram.InstagramError as e:
@@ -145,11 +144,11 @@ def api_instagram_callback(code: str = "", state: str = "", error: str = "", err
     if error or not code:
         return _back_to_ui(account_id, "error", error_description or error or "Kein Code von Instagram erhalten")
     try:
-        account_id = instagram.connect_account(account_id, code)
+        touched = instagram.connect(account_id, code)
     except (instagram.InstagramError, httpx.HTTPError) as e:
         log.warning("Instagram-Verbindung fehlgeschlagen: %s", e)
         return _back_to_ui(account_id, "error", str(e))
-    return _back_to_ui(account_id, "connected")
+    return _back_to_ui(touched[0], "connected", f"{len(touched)} Instagram-Konten verbunden" if len(touched) > 1 else "")
 
 
 async def _signed_request(request: Request) -> dict:
@@ -162,15 +161,13 @@ async def _signed_request(request: Request) -> dict:
 
 @app.post("/api/instagram/deauthorize")
 async def api_instagram_deauthorize(request: Request):
-    data = await _signed_request(request)
-    instagram.disconnect_user(str(data.get("user_id", "")))
+    instagram.disconnect(await _signed_request(request))
     return {"ok": True}
 
 
 @app.post("/api/instagram/data-deletion")
 async def api_instagram_data_deletion(request: Request):
-    data = await _signed_request(request)
-    instagram.disconnect_user(str(data.get("user_id", "")))
+    instagram.disconnect(await _signed_request(request))
     code = secrets.token_hex(8)
     return {"url": f"{settings.public_base_url}/api/instagram/data-deletion?code={code}", "confirmation_code": code}
 
@@ -259,29 +256,16 @@ def ui_system():
 def ui_instagram_connect(account_id: int | None = None):
     """Start Instagram Login for an account (or without id: create a new account from the login)."""
     if not instagram.configured():
-        raise HTTPException(503, "IG_APP_ID und IG_APP_SECRET im Container setzen, dann geht der Login")
+        raise HTTPException(503, "META_APP_ID, META_APP_SECRET und META_CONFIG_ID im Container setzen, dann geht der Login")
     if account_id is not None:
         _account_or_404(account_id)
     return RedirectResponse(instagram.authorize_url(account_id), status_code=303)
 
 
-@ui.post("/accounts/{account_id}/instagram/refresh")
-def ui_instagram_refresh(account_id: int):
-    acc = _account_or_404(account_id)
-    if not acc["access_token"]:
-        raise HTTPException(400, "Kein Token gespeichert")
-    try:
-        with httpx.Client(timeout=30) as c:
-            instagram.refresh_token(acc, c)
-    except (instagram.InstagramError, httpx.HTTPError) as e:
-        raise HTTPException(502, f"Instagram: {e}")
-    return _public_account(db.get_account(account_id))
-
-
 @ui.post("/accounts/{account_id}/instagram/disconnect")
 def ui_instagram_disconnect(account_id: int):
     _account_or_404(account_id)
-    db.save_account({"access_token": "", "token_expires_at": "", "token_refreshed_at": ""}, account_id)
+    instagram.clear_token(account_id)
     return _public_account(db.get_account(account_id))
 
 
@@ -292,7 +276,8 @@ def ui_settings():
         "reddit": {"configured": bool(settings.reddit_client_id and settings.reddit_client_secret),
                    "client_id_set": bool(settings.reddit_client_id), "secret_set": bool(settings.reddit_client_secret),
                    "user_agent": settings.reddit_user_agent},
-        "instagram": {"configured": instagram.configured(), "app_id": settings.ig_app_id,
+        "instagram": {"configured": instagram.configured(), "app_id": settings.meta_app_id,
+                      "config_id": settings.meta_config_id,
                       "redirect_uri": instagram.redirect_uri(),
                       "deauthorize_url": f"{settings.public_base_url}/api/instagram/deauthorize",
                       "data_deletion_url": f"{settings.public_base_url}/api/instagram/data-deletion",
@@ -331,7 +316,7 @@ def _save(body: AccountBody, account_id: int | None) -> dict:
             "posting_times": body.posting_times.strip(), "caption_template": body.caption_template.replace("\r\n", "\n"),
             "hashtags": body.hashtags.strip(), "hook_enabled": int(body.hook_enabled)}
     if body.access_token.strip():
-        # Pasted manually: expiry unknown, the refresher leaves it alone
+        # Pasted manually: expiry unknown
         data.update(access_token=body.access_token.strip(), token_expires_at="", token_refreshed_at="")
     new_id = db.save_account(data, account_id)
     return _public_account(db.get_account(new_id))

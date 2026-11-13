@@ -108,7 +108,7 @@ export type SystemInfo = {
 export type SettingsInfo = {
   reddit: { configured: boolean; client_id_set: boolean; secret_set: boolean; user_agent: string }
   api: { key_set: boolean; public_base_url: string; last_n8n_poll: number | null }
-  instagram: { configured: boolean; app_id: string; redirect_uri: string; deauthorize_url: string; data_deletion_url: string; graph_api_base: string }
+  instagram: { configured: boolean; app_id: string; config_id: string; redirect_uri: string; deauthorize_url: string; data_deletion_url: string; graph_api_base: string }
   ui_auth: boolean
   render: { encoder: string; x264_preset: string; width: number; height: number; loudness_lufs: number }
   automation: { slot_window_minutes: number; max_attempts_per_slot: number; media_retention_hours: number }
@@ -151,7 +151,7 @@ export function tokenDaysLeft(a: Account): number | null {
   return Math.floor((new Date(a.token_expires_at).getTime() - Date.now()) / 86_400_000)
 }
 
-/** Starts Instagram Login (full page navigation, Instagram redirects back to /account). */
+/** Starts the Meta login (Unified Login, full page navigation, Meta redirects back to /account). */
 export const instagramConnectUrl = (accountId?: number) => `/ui-api/instagram/connect${accountId ? `?account_id=${accountId}` : ""}`
 
 export function parseTimes(raw: string): string[] {

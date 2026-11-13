@@ -47,33 +47,33 @@ Fehler → n8n-Error-Workflow → E-Mail
 6. **GPU-Encoding (optional)**: `ENCODER=vaapi` setzen und im Compose `devices: /dev/dri`
    einkommentieren. Klappt es nicht, wird automatisch auf CPU (libx264) zurückgefallen.
 
-## Instagram-Accounts verbinden (Instagram Login)
+## Instagram-Accounts verbinden (Unified Login)
 
-Genutzt wird die **Instagram API mit Instagram Login** (`graph.instagram.com`). Eine Facebook-Seite
-ist nicht nötig, jeder Account muss nur ein **Business- oder Creator-Account** und öffentlich sein.
+Neue Meta-Apps bieten nur noch die **Instagram API mit Unified Login** an (Facebook Login for
+Business mit einer Konfiguration). Der Login geht wahlweise mit Instagram oder Facebook, eine
+Facebook-Seite ist nicht nötig, die App muss aber einem Business-Portfolio gehören. API-Host ist
+`graph.facebook.com`. Der Token ist ein Systemnutzer-Token und läuft standardmäßig nie ab.
 
-1. <https://developers.facebook.com/apps> → App erstellen → Use Case **Other** → Typ **Business**.
-2. Produkt **Instagram** hinzufügen → *API setup with Instagram login*.
-3. Unter *Business login settings* eintragen (Domain = `PUBLIC_BASE_URL`):
-   * OAuth redirect URI: `https://reels.deinedomain.de/api/instagram/callback`
-   * Deauthorize callback URL: `https://reels.deinedomain.de/api/instagram/deauthorize`
-   * Data deletion request URL: `https://reels.deinedomain.de/api/instagram/data-deletion`
-4. Dort stehen auch **Instagram app ID** und **Instagram app secret** → im Stack als
-   `IG_APP_ID` / `IG_APP_SECRET` setzen (nicht die Facebook-App-ID aus *App settings → Basic*).
-5. Jeden Instagram-Account unter *App roles → Roles* als **Instagram Tester** einladen und die
-   Einladung in der Instagram-App annehmen (Einstellungen → Website-Berechtigungen → Apps und
-   Websites → Einladungen). Für eigene Accounts reicht damit *Standard Access*, ein App Review
-   ist nicht nötig, die App kann im Entwicklungsmodus bleiben.
-6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Token (60 Tage) und
-   User-ID werden gespeichert und automatisch erneuert, bevor sie ablaufen.
+1. App vom Typ **Business** mit dem Anwendungsfall *Messaging und Content auf Instagram verwalten*.
+2. *Anwendungsfälle → Instagram API → Anpassen → API setup with Unified login*:
+   **Neue Konfiguration erstellen** (mindestens `instagram_basic` und `instagram_content_publish`,
+   Werbekonto überspringbar), **Use this configuration**, als Weiterleitungs-URL
+   `https://reels.deinedomain.de/api/instagram/callback` eintragen und speichern.
+   Die Konfigurations-ID merken.
+3. *Facebook Login for Business → Einstellungen*: dieselbe URL unter **Gültige OAuth Redirect URIs**,
+   außerdem *Autorisierung der Callback-URL widerrufen* = `https://reels.deinedomain.de/api/instagram/deauthorize`
+   und *URL der Anfrage zur Löschung von Daten* = `https://reels.deinedomain.de/api/instagram/data-deletion`.
+4. Im Stack setzen: `META_APP_ID` und `META_APP_SECRET` (*App-Einstellungen → Allgemeines*) und
+   `META_CONFIG_ID` (aus Schritt 2).
+5. Jeden Instagram-Account als **Instagram-Tester** einladen (*App-Rollen → Rollen*) und die
+   Einladung auf instagram.com annehmen: Einstellungen → Website-Berechtigungen → Apps und Websites →
+   Tester-Einladungen. Für eigene Accounts reicht *Standard Access*, ein App Review ist nicht nötig.
+6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Werden beim Login mehrere
+   Instagram-Konten freigegeben, bekommt jedes seinen Token; fehlende Accounts werden pausiert angelegt.
 
 Deauthorize und Data deletion ruft Meta direkt vom Server auf. Deshalb in Cloudflare Access
 (wie bei `/media`) eine Bypass-Application für `reels.deinedomain.de/api/instagram` anlegen.
 Die drei Endpunkte sind durch den signierten `state` bzw. Metas `signed_request` geschützt.
-
-**n8n**: Tokens aus Instagram Login funktionieren nur auf `graph.instagram.com`. In den Nodes
-*Create Reel Container*, *Check Container Status* und *Publish Reel* `https://graph.facebook.com/v22.0`
-durch `{{ $('Prepare Reel').item.json.graph_api_base }}` ersetzen (bzw. fest `https://graph.instagram.com/v27.0`).
 
 ## API (für n8n)
 

@@ -57,11 +57,12 @@ export default function SettingsPage() {
               <Row label="User-Agent" hint="REDDIT_USER_AGENT"><span className="font-mono text-xs">{cfg.reddit.user_agent}</span></Row>
             </Card>
             <Card>
-              <CardHeader title="Instagram" sub="Instagram Login, Token und User-ID pro Account"><Flag ok={cfg.instagram.configured} yes="App eingerichtet" no="IG_APP_ID / IG_APP_SECRET fehlen" /></CardHeader>
-              <Row label="OAuth Redirect URI" hint="Meta App → Instagram → Business login settings"><span className="font-mono text-xs break-all">{cfg.instagram.redirect_uri}</span></Row>
+              <CardHeader title="Instagram" sub="Instagram API mit Unified Login, Token und Konto-ID pro Account"><Flag ok={cfg.instagram.configured} yes="App eingerichtet" no="META_APP_ID / META_APP_SECRET / META_CONFIG_ID fehlen" /></CardHeader>
+              <Row label="OAuth Redirect URI" hint="Unified-Login-Konfiguration und Facebook Login for Business → Einstellungen"><span className="font-mono text-xs break-all">{cfg.instagram.redirect_uri}</span></Row>
               <Row label="Deauthorize callback URL"><span className="font-mono text-xs break-all">{cfg.instagram.deauthorize_url}</span></Row>
               <Row label="Data deletion request URL"><span className="font-mono text-xs break-all">{cfg.instagram.data_deletion_url}</span></Row>
-              <Row label="Instagram App-ID" hint="IG_APP_ID">{cfg.instagram.app_id ? <span className="font-mono text-xs">{cfg.instagram.app_id}</span> : <Flag ok={false} />}</Row>
+              <Row label="Meta App-ID" hint="META_APP_ID">{cfg.instagram.app_id ? <span className="font-mono text-xs">{cfg.instagram.app_id}</span> : <Flag ok={false} />}</Row>
+              <Row label="Konfigurations-ID" hint="META_CONFIG_ID">{cfg.instagram.config_id ? <span className="font-mono text-xs">{cfg.instagram.config_id}</span> : <Flag ok={false} />}</Row>
               {accounts.length === 0 ? <p className="text-ink-3">Noch keine Accounts.</p> : accounts.map((a) => (
                 <Row key={a.id} label={a.name} hint={a.ig_user_id ? `ID ${a.ig_user_id}` : "keine User-ID"}>
                   <span className="flex items-center gap-3 sm:justify-end">

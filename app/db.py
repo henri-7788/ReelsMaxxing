@@ -59,6 +59,7 @@ MIGRATIONS = (
     ("ig_username", "TEXT NOT NULL DEFAULT ''"),
     ("token_expires_at", "TEXT NOT NULL DEFAULT ''"),
     ("token_refreshed_at", "TEXT NOT NULL DEFAULT ''"),
+    ("client_business_id", "TEXT NOT NULL DEFAULT ''"),
 )
 
 _lock = threading.Lock()
@@ -122,7 +123,7 @@ def execute(sql: str, params=()) -> int:
 # --- accounts -------------------------------------------------------------
 ACCOUNT_FIELDS = ("name", "ig_user_id", "access_token", "active", "posting_times",
                   "caption_template", "hashtags", "hook_enabled", "ig_username", "token_expires_at",
-                  "token_refreshed_at")
+                  "token_refreshed_at", "client_business_id")
 
 
 def get_account(account_id: int) -> dict | None:
