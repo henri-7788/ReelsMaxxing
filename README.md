@@ -47,13 +47,29 @@ Fehler → n8n-Error-Workflow → E-Mail
 6. **GPU-Encoding (optional)**: `ENCODER=vaapi` setzen und im Compose `devices: /dev/dri`
    einkommentieren. Klappt es nicht, wird automatisch auf CPU (libx264) zurückgefallen.
 
-## Instagram-Accounts vorbereiten
+## Instagram-Accounts verbinden (Instagram Login)
 
-Jeder Account muss ein **Business- oder Creator-Account** sein und mit einer **Facebook-Seite**
-verknüpft sein. In einer Meta-App (developers.facebook.com) mit den Berechtigungen
-`instagram_basic`, `instagram_content_publish`, `pages_show_list` und `pages_read_engagement` einen
-langlebigen Token erzeugen und zusammen mit der Instagram-User-ID im Account eintragen.
-Die Anbindung in n8n folgt in Schritt 2.
+Genutzt wird die **Instagram API mit Instagram Login** (`graph.instagram.com`). Eine Facebook-Seite
+ist nicht nötig, jeder Account muss nur ein **Business- oder Creator-Account** und öffentlich sein.
+
+1. <https://developers.facebook.com/apps> → App erstellen → Use Case **Other** → Typ **Business**.
+2. Produkt **Instagram** hinzufügen → *API setup with Instagram login*.
+3. Unter *Business login settings* eintragen (Domain = `PUBLIC_BASE_URL`):
+   * OAuth redirect URI: `https://reels.deinedomain.de/api/instagram/callback`
+   * Deauthorize callback URL: `https://reels.deinedomain.de/api/instagram/deauthorize`
+   * Data deletion request URL: `https://reels.deinedomain.de/api/instagram/data-deletion`
+4. Dort stehen auch **Instagram app ID** und **Instagram app secret** → im Stack als
+   `IG_APP_ID` / `IG_APP_SECRET` setzen (nicht die Facebook-App-ID aus *App settings → Basic*).
+5. Jeden Instagram-Account unter *App roles → Roles* als **Instagram Tester** einladen und die
+   Einladung in der Instagram-App annehmen (Einstellungen → Website-Berechtigungen → Apps und
+   Websites → Einladungen). Für eigene Accounts reicht damit *Standard Access*, ein App Review
+   ist nicht nötig, die App kann im Entwicklungsmodus bleiben.
+6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Token (60 Tage) und
+   User-ID werden gespeichert und automatisch erneuert, bevor sie ablaufen.
+
+Die Callback-URLs liegen unter `/api/` und brauchen in Cloudflare Access **keine** Ausnahme
+(der Redirect läuft in deinem eigenen, schon angemeldeten Browser). Sie sind durch den signierten
+`state` bzw. Metas `signed_request` geschützt.
 
 ## API (für n8n)
 
@@ -62,7 +78,7 @@ Alle `/api`-Aufrufe brauchen den Header `X-API-Key: <API_KEY>`. Doku: `/api/docs
 | Methode | Pfad | Zweck |
 |---|---|---|
 | GET | `/api/due` | Accounts mit fälligem Slot: `{"due":[{"account_id","name","slot"}]}` |
-| POST | `/api/accounts/{id}/prepare` | Body `{"slot": "..."}` → `post_id, ig_user_id, access_token, video_url, caption` oder `{"skipped": true, "reason": ...}` |
+| POST | `/api/accounts/{id}/prepare` | Body `{"slot": "..."}` → `post_id, ig_user_id, access_token, graph_api_base, video_url, caption` oder `{"skipped": true, "reason": ...}` |
 | POST | `/api/posts/{id}/result` | Body `{"status": "publishing|published|failed", "ig_media_id": "...", "error": "..."}` |
 | POST | `/api/cleanup` | alte Medien löschen |
 
