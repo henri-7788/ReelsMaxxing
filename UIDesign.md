@@ -45,11 +45,11 @@ von der bestehenden UI ab:
 
 | Thema | Bestehend (Liquid Glass) | Neu (dieses Dokument) |
 |---|---|---|
-| Grundton | nur dunkel, bunter Verlaufshintergrund | **Light als Standard**, Dark als gleichwertiges Theme; neutrale, flache Hintergründe |
+| Grundton | nur dunkel, bunter Verlaufshintergrund | Hell und Dunkel; **Standard folgt der Systemeinstellung** des Geräts; neutrale, flache Hintergründe wie in der Vorlage |
 | Navigation | schwebende Glas-Pill oben mittig, 3 Links | **feste linke Sidebar** mit Gruppen, Badges, Account-Switcher; auf dem Handy Bottom-Tab-Bar |
 | Kopfzeile | große Seitenüberschrift + Breadcrumb im Inhalt | **Topbar** mit Seitentitel, Suche, Benachrichtigungen, System-Status |
 | Flächen | Glas mit Lichtbrechung (SVG-Filter), `.frost` | **weiße Karten mit 1-px-Rand**, kaum Schatten, kein Blur |
-| Akzentfarbe | Pink `#ff4f8b`, Pink→Orange-Verlauf | **Blau `#2563EB`** (wie Vorlage); Orange nur noch für Badges/Warnungen |
+| Akzentfarbe | Pink `#ff4f8b`, Pink→Orange-Verlauf | **Blau `#235EE8`** und alle anderen Farben exakt aus der Vorlage; Orange `#FF835B` für Badges |
 | Daten | Zahlen-Kacheln, Tabellen | zusätzlich **Heatmap, Linien-Chart, Pipeline, Kalender, Ring-Gauge** |
 | Seiten | Übersicht, Verlauf, Account | Dashboard, Accounts, Account-Detail, Warteschlange, Kalender, Statistiken, Logs, Einstellungen, System |
 
@@ -66,8 +66,14 @@ Was **bleibt**:
 **Liquid Glass entfällt** im neuen Design. Der Ordner `web/components/glass/` und die Abhängigkeit
 `liquid-glass-react` werden bei der Umsetzung nicht mehr gebraucht. Gründe: Die Vorlage ist
 bewusst flach, die SVG-Lichtbrechung kostet auf dem Celeron-Mini-PC bzw. schwachen Clients
-Leistung, und in Safari/Firefox funktionierte sie ohnehin nur eingeschränkt. Optional darf das
-Dark-Theme einen **dezenten** Rest davon behalten (siehe [9.3](#93-optional-glas-akzent-im-dark-theme)).
+Leistung, und in Safari/Firefox funktionierte sie ohnehin nur eingeschränkt. Es gibt **keine
+Glas-Optik**, auch nicht im Dark-Theme: kein Blur, kein `backdrop-filter`, kein bunter
+Hintergrund.
+
+**Leitlinie:** Das Design folgt der Vorlage so genau wie möglich (Farben, Abstände, Radien,
+Schrift, Aufbau der Karten). Abweichungen gibt es nur dort, wo der Use Case etwas verlangt, das
+die Vorlage nicht zeigt (z. B. Fehlerzustände, Pipeline, Kalender). Neue Elemente werden aus den
+Bausteinen der Vorlage zusammengesetzt.
 
 ---
 
@@ -117,76 +123,79 @@ Dark-Theme einen **dezenten** Rest davon behalten (siehe [9.3](#93-optional-glas
 
 ## 3. Design-Tokens
 
-Alle Werte als CSS-Variablen in `globals.css` (Tailwind-4-`@theme`), Light-Werte als Standard,
-Dark-Werte über `[data-theme="dark"]`. Namen sind semantisch (`--surface`, nicht `--white`).
+Alle Werte als CSS-Variablen in `globals.css` (Tailwind-4-`@theme`), Light-Werte im `:root`,
+Dark-Werte über `[data-theme="dark"]` bzw. `@media (prefers-color-scheme: dark)`. Namen sind semantisch (`--surface`, nicht `--white`).
 
 ### 3.1 Farben
 
-#### Primär (Blau, aus der Vorlage abgeleitet)
+Alle Light-Werte sind **direkt aus der Vorlage gemessen** (Pixelwerte des Screenshots, auf
+saubere Hex-Werte gerundet). Es kommen keine Farben dazu, die die Vorlage nicht hat, mit einer
+Ausnahme: Rot (`--danger`) für Fehler, weil die Vorlage keinen Fehlerzustand zeigt. Die
+Dark-Werte sind aus denselben Tönen abgeleitet (die Vorlage zeigt nur den Umschalter, kein
+dunkles Layout).
 
-| Token | Light | Dark | Verwendung |
-|---|---|---|---|
-| `--primary-50` | `#EFF4FF` | `#172554` | aktiver Nav-Hintergrund, Heatmap Stufe 1, Hover-Flächen |
-| `--primary-100` | `#DBE6FE` | `#1E3A8A` | Heatmap Stufe 2, Tooltip-Band im Chart |
-| `--primary-200` | `#BFD3FE` | `#1D4ED8` | Heatmap Stufe 3 |
-| `--primary-300` | `#93B4FD` | `#2563EB` | Heatmap Stufe 4, sekundäre Serie |
-| `--primary-400` | `#6090FA` | `#3B82F6` | Heatmap Stufe 5 |
-| `--primary-500` | `#3B6EF5` | `#60A5FA` | Hover von Primary-Buttons (Dark) |
-| `--primary-600` | `#2563EB` | `#60A5FA` | **Hauptakzent**: Linien, aktiver Text, Primary-Button, Fokus |
-| `--primary-700` | `#1D4ED8` | `#93C5FD` | Primary-Button pressed, Links |
-| `--sky-300` | `#7DD3FC` | `#38BDF8` | zweite Ring-Farbe im Gauge (Vorlage: hellblaues Segment) |
+#### Primär (Blau der Vorlage)
 
-#### Neutrale
+| Token | Light | Dark | Herkunft in der Vorlage | Verwendung |
+|---|---|---|---|---|
+| `--primary-50` | `#F2F6FF` | `#14213D` | Hintergrund aktiver Nav-Eintrag „Dashboard“, Innenkreis des Donuts, hellste Heatmap-Zellen | aktiver Nav-Hintergrund, Heatmap Stufe 1, Hover-Flächen |
+| `--primary-100` | `#EAF0FE` | `#1A2B52` | Hover-Band im „Active Users“-Chart | Tooltip-Band, ausgewählte Zeile |
+| `--primary-200` | `#CBD8FA` | `#22407F` | Heatmap/Legende 200–400 | Heatmap Stufe 2 |
+| `--primary-400` | `#7B9EF2` | `#3F6FE0` | Heatmap/Legende 400–600 | Heatmap Stufe 3, sekundäre Serie |
+| `--primary-600` | `#235EE8` | `#5B8CF5` | Heatmap/Legende 600–800, Chart-Linie, Logo, Donut-Hauptsegment | **Hauptakzent**: Linien, aktiver Text, Primary-Button, Fokus, Heatmap Stufe 4 |
+| `--primary-700` | `#1D4EC4` | `#8DB0FA` | Text des aktiven Nav-Eintrags, Wert im Tooltip | aktiver Text, Links, Primary-Button pressed |
+| `--sky-400` | `#6CAEFA` | `#5AA2F5` | mittleres Donut-Segment, Icon „Mobile“ | zweites Ring-Segment, zweite Serie |
+| `--sky-200` | `#A1E2FF` | `#3C9ACB` | hellstes Donut-Segment, Icon „Tablet“ | drittes Ring-Segment |
 
-| Token | Light | Dark | Verwendung |
-|---|---|---|---|
-| `--bg` | `#F4F6FA` | `#0B1020` | Seitenhintergrund (außerhalb der Karten) |
-| `--surface` | `#FFFFFF` | `#121A2B` | Karten, Sidebar, Topbar |
-| `--surface-2` | `#F8FAFC` | `#172133` | Eingabefelder, Tabellenkopf, Segmented-Control-Hintergrund |
-| `--surface-hover` | `#F1F5F9` | `#1C2840` | Zeilen-/Item-Hover |
-| `--border` | `#E6E9EF` | `#24304A` | Kartenrand, Trennlinien |
-| `--border-strong` | `#D5DAE3` | `#33415F` | Input-Rand, Button-Outline |
-| `--grid` | `#EEF1F5` | `#1F2A40` | Chart-Gitterlinien (gestrichelt) |
-| `--text` | `#0F172A` | `#E7ECF5` | Überschriften, große Zahlen |
-| `--text-2` | `#475569` | `#A9B4C8` | Fließtext, Nav-Items |
-| `--text-3` | `#94A3B8` | `#6B7891` | Achsenbeschriftungen, Hinweise, „von letzter Woche“ |
+#### Neutrale (Grautöne der Vorlage, ohne Blaustich)
 
-#### Status- und Signalfarben
+| Token | Light | Dark | Herkunft in der Vorlage | Verwendung |
+|---|---|---|---|---|
+| `--bg` | `#F3F4F8` | `#0E1015` | Hintergrund um das App-Fenster | Seitenhintergrund (außerhalb der Karten) |
+| `--surface` | `#FFFFFF` | `#16191F` | Sidebar, Topbar, Karten | Karten, Sidebar, Topbar |
+| `--surface-2` | `#F7F7F9` | `#1D2027` | Hintergrund des Hell/Dunkel-Umschalters, Segmented „Month“ | Eingabefelder, Tabellenkopf, Segmented-Control-Hintergrund |
+| `--surface-hover` | `#F5F6F8` | `#22262E` | — | Zeilen-/Item-Hover |
+| `--border` | `#EBEBEB` | `#2A2E37` | Kartenränder, Linie unter Topbar, Kreuz in der KPI-Karte | Kartenrand, Trennlinien |
+| `--border-strong` | `#DFE2E7` | `#3A3F4A` | Rand Suchfeld, „View report“, Segmented Control | Input-Rand, Button-Outline |
+| `--grid` | `#EBEBEB` | `#262A32` | gestrichelte Chart-Gitterlinien | Chart-Gitterlinien |
+| `--text` | `#0B0B0F` | `#F2F3F5` | „Dashboard“, KPI-Werte, „10,739“, Prozentwerte rechts | Überschriften, große Zahlen |
+| `--text-2` | `#3A3D42` | `#C3C7CF` | Nav-Einträge, Kartentitel-Nähe | Nav-Items, Fließtext |
+| `--text-label` | `#575E66` | `#A3A9B3` | KPI-Labels „Users“, „Revenue“ | Labels |
+| `--text-3` | `#939395` | `#7C818B` | Achsen, „from last week“, „OTHERS“, „APPEARANCE“, Platzhalter „Search here …“ | Achsen, Hinweise, Overlines |
 
-| Token | Light | Dark | Verwendung |
-|---|---|---|---|
-| `--success` | `#16A34A` | `#4ADE80` | Trend ↑, „gepostet“, „aktiv“, System ok |
-| `--success-bg` | `#ECFDF3` | `#0F2A1C` | Pill-Hintergrund |
-| `--danger` | `#DC2626` | `#F87171` | Trend ↓ (bei „guten“ Kennzahlen), „Fehler“, Gefahrenzone |
-| `--danger-bg` | `#FEF2F2` | `#2A1215` | |
-| `--warning` | `#F97316` | `#FB923C` | **Badge** (Vorlage: orange „10“), „Instagram fehlt“, „Token läuft ab“, CPU > 80 % |
-| `--warning-bg` | `#FFF4ED` | `#2B1A0E` | |
-| `--info` | `#2563EB` | `#60A5FA` | „bereit“, „wird gepostet“ |
-| `--violet` | `#7C3AED` | `#A78BFA` | „Vorschau“ |
-| `--amber` | `#D97706` | `#FBBF24` | „rendert“ (pulsierender Punkt) |
-| `--notify-dot` | `#EF4444` | `#F87171` | roter Punkt an der Glocke |
+#### Signalfarben
 
-**Zuordnung Post-Status → Farbe** (ersetzt `.s-*` in `globals.css`):
+| Token | Light | Dark | Herkunft in der Vorlage | Verwendung |
+|---|---|---|---|---|
+| `--success` | `#22A35E` | `#4CC98A` | grüne Trend-Pfeile und Prozente | Trend ↑, „gepostet“, „aktiv“, System ok |
+| `--success-bg` | `#EAF7F0` | `#13291E` | — (abgeleitet) | Pill-Hintergrund |
+| `--warning` | `#FF835B` | `#FF9A78` | Badge „10“ bei Audience, Punkt an der Glocke | **Badges**, Glocken-Punkt, „Instagram fehlt“, „Token läuft ab“, „rendert“, CPU > 80 % |
+| `--warning-bg` | `#FFF1EC` | `#2E1C16` | — (abgeleitet) | Pill-Hintergrund |
+| `--danger` | `#E5484D` | `#F2777A` | **nicht in der Vorlage**, nötig für Fehler | Trend ↓, „Fehler“, Gefahrenzone |
+| `--danger-bg` | `#FDEEEE` | `#2E1617` | — | Pill-Hintergrund |
+
+**Zuordnung Post-Status → Farbe** (ersetzt `.s-*` in `globals.css`; nur Töne der Vorlage + Rot):
 
 | Status (DB) | Label | Farbe | Punkt |
 |---|---|---|---|
-| `found` 🔧 | Gefunden | `--text-2` | statisch |
-| `preview` | Vorschau | `--violet` | statisch |
-| `rendering` | Rendert | `--amber` | pulsiert (1,2 s) |
-| `ready` | Bereit | `--info` | statisch |
+| `found` 🔧 | Gefunden | `--text-3` | statisch |
+| `preview` | Vorschau | `--sky-400` | statisch |
+| `rendering` | Rendert | `--warning` | pulsiert (1,2 s) |
+| `ready` | Bereit | `--primary-600` | statisch |
 | `scheduled` 🔧 | Geplant | `--primary-600` | Ring (hohl) |
-| `publishing` | Wird gepostet | `--info` | pulsiert |
+| `publishing` | Wird gepostet | `--primary-600` | pulsiert |
 | `published` | Gepostet | `--success` | statisch |
 | `failed` | Fehler | `--danger` | statisch |
 | `skipped` 🔧 | Übersprungen | `--text-3` | statisch |
 
-Account-Farben: Jeder Account bekommt eine **Kennfarbe** aus einer festen Reihe
-(`#2563EB`, `#0EA5E9`, `#8B5CF6`, `#F97316`, `#10B981`, `#EC4899`, `#64748B`, `#EAB308`),
-in der Reihenfolge der Account-ID. Sie wird nur für kleine Marker benutzt (Punkt im Kalender,
+Account-Farben: Jeder Account bekommt eine **Kennfarbe**, ebenfalls nur aus der Vorlage, in
+dieser Reihenfolge nach Account-ID: `#235EE8`, `#6CAEFA`, `#FF835B`, `#22A35E`, `#7B9EF2`,
+`#1D4EC4`, `#A1E2FF`, `#939395`. Sie wird nur für kleine Marker benutzt (Punkt im Kalender,
 Linie im Vergleichs-Chart, Avatar-Ring), nie für Flächen.
 
 Kontrast: Alle Text/Hintergrund-Paare erfüllen WCAG AA (4,5 : 1 für Text, 3 : 1 für große
-Zahlen und UI-Ränder). `--text-3` nur für Text ≥ 12 px mit nicht kritischer Information.
+Zahlen und UI-Ränder). `--text-3` nur für Text ≥ 12 px mit nicht kritischer Information; Weiß
+auf `--warning` nur für die Badge-Zahl (fett, wie in der Vorlage).
 
 ### 3.2 Typografie
 
@@ -203,7 +212,7 @@ Zahlen immer mit `font-variant-numeric: tabular-nums`. Monospace (Platzhalter, L
 | `card-title` | 15 / 22 px | 600 | `--text` | „Beste Posting-Zeiten“ |
 | `body` | 14 / 20 px | 400 | `--text-2` | Fließtext, Tabellenzellen |
 | `nav` | 14 / 20 px | 500 | `--text-2`, aktiv `--primary-600` | Sidebar-Einträge |
-| `label` | 13 / 18 px | 500 | `--text-2` | Formular-Labels, KPI-Bezeichnung |
+| `label` | 13 / 18 px | 500 | `--text-label` | Formular-Labels, KPI-Bezeichnung |
 | `caption` | 12 / 16 px | 400 | `--text-3` | „von letzter Woche“, Achsen, Hinweise |
 | `overline` | 11 / 16 px, `letter-spacing: .08em`, Großbuchstaben | 500 | `--text-3` | „WEITERE“, „DARSTELLUNG“, Tabellenkopf |
 | `mono` | 12 / 18 px | 400 | `--text-2` | Logs, `{title}` |
@@ -319,8 +328,8 @@ Empfehlung: **Lucide** (`lucide-react`, tree-shakeable, nur genutzte Icons lande
 Von oben nach unten:
 
 1. **Logo-Zeile** (64 px hoch, bündig mit Topbar, Trennlinie darunter):
-   Blauer Kreis 28 px (`--primary-600`) mit weißem Play-Dreieck (ersetzt das pinke Quadrat aus
-   `icon.svg`), daneben „Reels-Manager“ in `card-title`, 600.
+   Blauer Kreis 28 px (`--primary-600`) mit weißem Symbol wie in der Vorlage (dort ein Pfeil
+   nach oben rechts; bei uns ein Play-Dreieck, ersetzt das pinke Quadrat aus `icon.svg`), daneben „Reels-Manager“ in `card-title`, 600.
 2. **Account-Switcher** (neu, siehe [6.2](#62-account-switcher)).
 3. **Hauptnavigation**:
    * Dashboard
@@ -337,9 +346,10 @@ Von oben nach unten:
 5. Abstandhalter (`flex: 1`)
 6. **Mini-PC-Kurzstatus** (neu): eine Zeile „● Mini-PC ok · CPU 23 %“ in `caption`; Punkt grün /
    orange / rot. Klick → System-Seite.
-7. Überschrift **DARSTELLUNG** + **Theme-Umschalter** (Segmented Control mit „☀ Hell“ /
-   „☾ Dunkel“, siehe [6.10](#610-segmented-control)). Optional dritte Option „Auto“
-   (Systemeinstellung) als Standard.
+7. Überschrift **DARSTELLUNG** + **Theme-Umschalter** genau wie in der Vorlage (Segmented
+   Control mit „☀ Hell“ / „☾ Dunkel“, siehe [6.10](#610-segmented-control)). Ohne eigene Wahl
+   folgt das Theme der Systemeinstellung, und das passende Segment ist markiert. Ein Klick
+   überschreibt das; „Systemstandard verwenden“ in Einstellungen → Darstellung setzt es zurück.
 
 **Nav-Item-Zustände**
 
@@ -443,9 +453,10 @@ Wiederverwendung der Vorlage („User by time of day“).
 * Zelle: `--radius-sm`, 2 px Abstand, Seitenverhältnis ca. 1,6 : 1.
 * Wert: **Ø Views** der Reels, die in dieser Stunde gepostet wurden 🔧. Umschaltbar im
   Kopf-Select: „Ø Views“ · „Ø Likes“ · „Anzahl Posts“ (letzteres geht schon heute aus der DB).
-* Farbskala 6 Stufen: `--surface-2` (keine Daten), `--primary-50`, `-100`, `-200`, `-400`,
-  `-600`. Keine Daten ≠ Wert 0: „keine Daten“ bekommt ein feines Schraffurmuster.
-* **Legende** darunter wie Vorlage: durchgehender Balken in 4 Segmenten mit Grenzwerten
+* Farbskala wie Vorlage, 4 Stufen + leer: `--primary-50` (keine/kaum Daten), `--primary-200`,
+  `--primary-400`, `--primary-600`. Keine Daten ≠ Wert 0: „keine Daten“ bekommt ein feines Schraffurmuster.
+* **Legende** darunter wie Vorlage: durchgehender Balken in 4 Segmenten (`--primary-50`,
+  `-200`, `-400`, `-600`) mit Grenzwerten
   (automatisch aus Quartilen berechnet, gerundet: „0 · 2 k · 5 k · 10 k · 20 k“).
 * **Overlay der eigenen Slots**: Zellen, in denen der gewählte Account einen festen
   Posting-Slot hat, bekommen einen 2-px-Rand in `--text` (Light) / `#fff` (Dark). So sieht man,
@@ -481,7 +492,8 @@ Segmenten, Innenkreis `--primary-50`.
   (`caption`).
 * **Ring**: drei konzentrische Bögen statt Segmenten wäre zu unruhig; daher **ein** Ring mit
   einem Bogen = CPU-Last (Farbe nach Schwellwert: < 60 % `--primary-600`, 60–85 % `--warning`,
-  > 85 % `--danger`), Rest `--surface-2`.
+  > 85 % `--danger`), Rest `--surface-2`. Für den Pipeline-Ring gelten die drei Blautöne der
+  Vorlage: `--primary-600`, `--sky-400`, `--sky-200`.
 * **Liste darunter** (wie Desktop/Mobile/Tablet in der Vorlage): Icon · Label · Wert rechts.
   * RAM — „1,6 / 4 GB“
   * Speicher `/media` — „12 GB frei“
@@ -574,7 +586,7 @@ Wie „Day / Month / Year“ und „Light / Dark“ der Vorlage.
 
 | Variante | Light | Dark | Verwendung |
 |---|---|---|---|
-| Primary | `--primary-600` Fläche, weißer Text; Hover `--primary-700` | `--primary-600` (= `#60A5FA`) Fläche, Text `#0B1020` | Speichern, Account anlegen |
+| Primary | `--primary-600` Fläche, weißer Text; Hover `--primary-700` | `--primary-600` (= `#5B8CF5`) Fläche, Text `#0E1015` | Speichern, Account anlegen |
 | Secondary / Outline | `--surface`, Rand `--border-strong`, Text `--text`; Hover `--surface-hover` | gleich mit Dark-Tokens | „Bericht ansehen ›“, „Vorschau rendern“ |
 | Ghost | transparent, Text `--text-2`; Hover `--surface-hover` | | Icon-Buttons, `⋯` |
 | Danger | Rand `--danger`, Text `--danger`; Hover Fläche `--danger-bg` | | „Account löschen“ |
@@ -600,7 +612,7 @@ Gleiche Felder wie heute (`.field`), neu gestaltet:
 * **Zeit-Chips** für Posting-Zeiten: statt Freitext eine Chip-Liste („09:00 ×“) + „+ Zeit“
   (öffnet `<input type="time">`). Freitext bleibt als Fallback.
 * **Schalter** (Toggle): 40 × 22 px, an = `--primary-600`, aus = `--border-strong`, Knopf weiß.
-  Ersetzt den Pink-Orange-Verlauf.
+  Ersetzt den Pink-Orange-Verlauf aus der alten UI.
 * **Checkbox / Radio**: 16 px, `--radius-sm`, an = `--primary-600`.
 * **Slider** (Lautstärke, Hook-Größe): Spur 4 px `--surface-2`, Füllung `--primary-600`, Knopf 16 px.
 * **Platzhalter-Chips** für die Caption (`{title}` …): `mono`, `--surface-2`, klickbar → fügt am
@@ -672,7 +684,7 @@ Jede Quelle als Zeile:
 
 ### 6.19 Fortschritt
 
-* **Render-Fortschritt**: Balken 4 px, `--surface-2` → `--amber`, Prozent + ETA rechts
+* **Render-Fortschritt**: Balken 4 px, `--surface-2` → `--warning`, Prozent + ETA rechts
   („62 % · ~40 s“) 🔧. Ohne echte Prozentzahl: unbestimmter Balken (Animation), Text „rendert
   seit 1:12“.
 * **Spinner**: 16/20 px, 2-px-Ring `--primary-600`.
@@ -802,7 +814,8 @@ Linke Unter-Navigation (Desktop) bzw. Tabs (Handy):
    Slot (heute 2), Aufräumen der Medien nach 48 h, Vorschau-Freigabe nötig ja/nein 🔧.
 4. **System**: Encoder (`libx264` / `vaapi`, schreibgeschützt aus Env), Host-Port, Version,
    Datenverzeichnis.
-5. **Darstellung**: Theme (Hell · Dunkel · Auto), Dichte (Normal · Kompakt), Startseite.
+5. **Darstellung**: Theme (Hell · Dunkel) mit Link „Systemstandard verwenden“ (Standard),
+   Dichte (Normal · Kompakt), Startseite.
 
 ### 7.9 System (Mini-PC)
 
@@ -867,9 +880,12 @@ eine Aktion. Zentriert, 32 px Innenabstand.
 
 ### 9.1 Umschalten
 
-* Theme-Umschalter in der Sidebar (Hell · Dunkel, optional Auto) und in Einstellungen →
-  Darstellung.
-* Speicherung in `localStorage` (`theme`), gesetzt als `data-theme` am `<html>`. Ein kleines
+* **Standard: Systemeinstellung** (`prefers-color-scheme`). Solange der Nutzer nichts wählt,
+  wechselt die Oberfläche live mit dem System (z. B. nachts automatisch dunkel).
+* Theme-Umschalter in der Sidebar (Hell · Dunkel, wie Vorlage) überschreibt das; Einstellungen →
+  Darstellung → „Systemstandard verwenden“ setzt es zurück.
+* Eine eigene Wahl wird in `localStorage` (`theme`) gespeichert und als `data-theme` am
+  `<html>` gesetzt; ohne Eintrag gilt die Media-Query. Ein kleines
   Inline-Skript im `<head>` setzt das Attribut **vor** dem ersten Paint (kein Aufblitzen).
 * `color-scheme: light` bzw. `dark` passend setzen (native Scrollbars, Datumsfelder).
 * `<meta name="theme-color">` je Theme: `#F4F6FA` / `#0B1020`.
@@ -879,18 +895,11 @@ eine Aktion. Zentriert, 32 px Innenabstand.
 * Alle Farben nur über Tokens; keine festen Hex-Werte in Komponenten.
 * Flächen werden nach oben **heller** (`--bg` < `--surface` < `--surface-2`), Schatten
   entfallen weitgehend.
-* Primärblau wird heller (`#60A5FA`), damit es auf dunklem Grund AA erreicht.
-* Heatmap-Skala im Dark: von `--surface-2` über dunkle Blautöne bis `#60A5FA`; höchste Stufe
-  bleibt die hellste.
+* Primärblau wird heller (`#5B8CF5`), damit es auf dunklem Grund AA erreicht.
+* Heatmap-Skala im Dark: dieselben 4 Stufen mit den Dark-Werten von `--primary-50` bis
+  `--primary-600`; höchste Stufe bleibt die kräftigste.
 * Chart-Fläche: Verlauf 24 % → 0 % (statt 16 %), damit sie sichtbar bleibt.
 * Bilder/Thumbnails bekommen 1-px-Rand `--border`, damit sie sich vom Grund lösen.
-
-### 9.3 Optional: Glas-Akzent im Dark-Theme
-
-Wer den Look der bisherigen Oberfläche teilweise behalten will: Im Dark-Theme darf **nur** die
-Topbar und das Account-Switcher-Popover `backdrop-filter: blur(12px)` mit
-`--surface` bei 80 % Deckkraft bekommen. Kein `liquid-glass-react`, kein SVG-Filter, kein bunter
-Hintergrund. Standard ist **aus**.
 
 ---
 
@@ -955,7 +964,7 @@ Der Server ist ein Celeron N2930, der nebenbei ffmpeg rendert. Daraus folgt für
 * Weiterhin **statischer Export**; keine serverseitige Laufzeit für das Frontend.
 * Keine schwere Chart-Bibliothek: Charts, Heatmap und Gauge als **eigenes SVG** (wenige
   hundert Zeilen) oder höchstens eine kleine Lib (< 50 kB gz). Kein Canvas-Rendering nötig.
-* Keine Blur-/SVG-Filter-Effekte (Grund für den Verzicht auf Liquid Glass).
+* Keine Blur-/SVG-Filter-Effekte, keine Glas-Optik.
 * Polling sparsam: Dashboard 30 s, Mini-PC 10 s, Render-Fortschritt 3 s – alles nur bei
   sichtbarem Tab (`document.visibilityState`), sonst pausiert.
 * Thumbnails: beim Rendern ein JPG (270 × 480, ~20 kB) mit erzeugen 🔧; nie das MP4 als
@@ -1007,10 +1016,5 @@ Alles mit 🔧 braucht Daten oder Funktionen, die es im Backend (`app/`) heute n
 | Letzter n8n-Aufruf | Hinweis „n8n fragt nicht ab“ | Zeitstempel bei `GET /api/due` speichern |
 | Caption pro Video bearbeiten, Freigabe-Pflicht | Video-Vorschau | `PATCH /ui-api/posts/{id}` |
 
-Offene Design-Fragen:
-
-1. Soll **Light** wirklich Standard sein, oder „Auto“ (Systemeinstellung)? Vorschlag: Auto.
-2. Bleibt der optionale Glas-Akzent im Dark-Theme ([9.3](#93-optional-glas-akzent-im-dark-theme))
-   oder fällt Liquid Glass komplett weg? Vorschlag: komplett weg.
-3. Akzentfarbe Blau (Vorlage) oder das bisherige Pink als Marken-Erinnerung? Vorschlag: Blau überall,
-   auch im Logo, damit es ein einheitliches System bleibt.
+Entschieden (Henri): Theme folgt standardmäßig der Systemeinstellung, keine Glas-Optik,
+Design und Farben so genau wie möglich wie in der Vorlage.
