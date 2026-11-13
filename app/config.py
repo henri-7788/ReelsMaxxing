@@ -21,6 +21,12 @@ class Settings:
     reddit_client_id: str = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_ID", ""))
     reddit_client_secret: str = field(default_factory=lambda: os.getenv("REDDIT_CLIENT_SECRET", ""))
     reddit_user_agent: str = field(default_factory=lambda: os.getenv("REDDIT_USER_AGENT", "linux:reels-manager:v1.0"))
+    # Instagram API with Unified Login: Meta app ID/secret (App settings > Basic) and the
+    # Facebook Login for Business configuration ID (Use cases > Instagram > API setup with Unified login)
+    meta_app_id: str = field(default_factory=lambda: os.getenv("META_APP_ID", ""))
+    meta_app_secret: str = field(default_factory=lambda: os.getenv("META_APP_SECRET", ""))
+    meta_config_id: str = field(default_factory=lambda: os.getenv("META_CONFIG_ID", ""))
+    meta_graph_version: str = field(default_factory=lambda: os.getenv("META_GRAPH_VERSION", "v27.0"))
     # libx264 (software) or vaapi (Intel GPU, needs /dev/dri)
     encoder: str = field(default_factory=lambda: os.getenv("ENCODER", "libx264"))
     x264_preset: str = field(default_factory=lambda: os.getenv("X264_PRESET", "veryfast"))

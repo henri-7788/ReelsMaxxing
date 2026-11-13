@@ -54,6 +54,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS posts_reddit_unique ON posts(reddit_id);
 CREATE INDEX IF NOT EXISTS posts_account_slot ON posts(account_id, slot);
 """
 
+# Columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them to old databases)
+MIGRATIONS = (
+    ("ig_username", "TEXT NOT NULL DEFAULT ''"),
+    ("token_expires_at", "TEXT NOT NULL DEFAULT ''"),
+    ("token_refreshed_at", "TEXT NOT NULL DEFAULT ''"),
+    ("client_business_id", "TEXT NOT NULL DEFAULT ''"),
+)
+
 _lock = threading.Lock()
 
 
@@ -90,6 +98,10 @@ def init_db() -> None:
         d.mkdir(parents=True, exist_ok=True)
     with tx() as c:
         c.executescript(SCHEMA)
+        have = {r[1] for r in c.execute("PRAGMA table_info(accounts)")}
+        for col, ddl in MIGRATIONS:
+            if col not in have:
+                c.execute(f"ALTER TABLE accounts ADD COLUMN {col} {ddl}")
 
 
 def rows(sql: str, params=()) -> list[dict]:
@@ -110,7 +122,8 @@ def execute(sql: str, params=()) -> int:
 
 # --- accounts -------------------------------------------------------------
 ACCOUNT_FIELDS = ("name", "ig_user_id", "access_token", "active", "posting_times",
-                  "caption_template", "hashtags", "hook_enabled")
+                  "caption_template", "hashtags", "hook_enabled", "ig_username", "token_expires_at",
+                  "token_refreshed_at", "client_business_id")
 
 
 def get_account(account_id: int) -> dict | None:

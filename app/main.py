@@ -3,15 +3,17 @@ import base64
 import logging
 import secrets
 import threading
+from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, pipeline, scheduler, stats, system
+from . import db, instagram, pipeline, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -120,6 +122,61 @@ def api_result(post_id: int, body: ResultBody):
         raise HTTPException(400, str(e))
 
 
+# ----------------------------------------------------------- Instagram Login
+# These are public (no API key / basic auth): Instagram redirects the browser here, Meta calls the
+# other two server-to-server. They are protected by the signed state / signed_request instead.
+def _back_to_ui(account_id: int | None, result: str, message: str = "") -> RedirectResponse:
+    params = {"ig": result}
+    if message:
+        params["ig_message"] = message[:300]
+    path = f"/account?id={account_id}&" if account_id else "/accounts?"
+    return RedirectResponse(path + urlencode(params), status_code=303)
+
+
+@app.get("/api/instagram/callback")
+def api_instagram_callback(code: str = "", state: str = "", error: str = "", error_description: str = ""):
+    if not instagram.configured():
+        raise HTTPException(503, "META_APP_ID / META_APP_SECRET / META_CONFIG_ID sind nicht gesetzt")
+    try:
+        account_id = instagram.read_state(state)
+    except instagram.InstagramError as e:
+        raise HTTPException(400, str(e))
+    if error or not code:
+        return _back_to_ui(account_id, "error", error_description or error or "Kein Code von Instagram erhalten")
+    try:
+        touched = instagram.connect(account_id, code)
+    except (instagram.InstagramError, httpx.HTTPError) as e:
+        log.warning("Instagram-Verbindung fehlgeschlagen: %s", e)
+        return _back_to_ui(account_id, "error", str(e))
+    return _back_to_ui(touched[0], "connected", f"{len(touched)} Instagram-Konten verbunden" if len(touched) > 1 else "")
+
+
+async def _signed_request(request: Request) -> dict:
+    form = await request.form()
+    try:
+        return instagram.parse_signed_request(str(form.get("signed_request", "")))
+    except (instagram.InstagramError, ValueError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/instagram/deauthorize")
+async def api_instagram_deauthorize(request: Request):
+    instagram.disconnect(await _signed_request(request))
+    return {"ok": True}
+
+
+@app.post("/api/instagram/data-deletion")
+async def api_instagram_data_deletion(request: Request):
+    instagram.disconnect(await _signed_request(request))
+    code = secrets.token_hex(8)
+    return {"url": f"{settings.public_base_url}/api/instagram/data-deletion?code={code}", "confirmation_code": code}
+
+
+@app.get("/api/instagram/data-deletion")
+def api_instagram_data_deletion_status(code: str = ""):
+    return {"confirmation_code": code, "status": "Der Instagram-Token wurde gelöscht."}
+
+
 @app.post("/api/cleanup", dependencies=[Depends(require_api_key)])
 def api_cleanup():
     return {"removed": pipeline.cleanup_media()}
@@ -195,6 +252,23 @@ def ui_system():
     return system.snapshot()
 
 
+@ui.get("/instagram/connect")
+def ui_instagram_connect(account_id: int | None = None):
+    """Start Instagram Login for an account (or without id: create a new account from the login)."""
+    if not instagram.configured():
+        raise HTTPException(503, "META_APP_ID, META_APP_SECRET und META_CONFIG_ID im Container setzen, dann geht der Login")
+    if account_id is not None:
+        _account_or_404(account_id)
+    return RedirectResponse(instagram.authorize_url(account_id), status_code=303)
+
+
+@ui.post("/accounts/{account_id}/instagram/disconnect")
+def ui_instagram_disconnect(account_id: int):
+    _account_or_404(account_id)
+    instagram.clear_token(account_id)
+    return _public_account(db.get_account(account_id))
+
+
 @ui.get("/settings")
 def ui_settings():
     """Read-only view of the configuration. Secrets are never sent, only whether they are set."""
@@ -202,6 +276,12 @@ def ui_settings():
         "reddit": {"configured": bool(settings.reddit_client_id and settings.reddit_client_secret),
                    "client_id_set": bool(settings.reddit_client_id), "secret_set": bool(settings.reddit_client_secret),
                    "user_agent": settings.reddit_user_agent},
+        "instagram": {"configured": instagram.configured(), "app_id": settings.meta_app_id,
+                      "config_id": settings.meta_config_id,
+                      "redirect_uri": instagram.redirect_uri(),
+                      "deauthorize_url": f"{settings.public_base_url}/api/instagram/deauthorize",
+                      "data_deletion_url": f"{settings.public_base_url}/api/instagram/data-deletion",
+                      "graph_api_base": instagram.graph_api_base()},
         "api": {"key_set": bool(settings.api_key), "public_base_url": settings.public_base_url,
                 "last_n8n_poll": system.snapshot()["last_n8n_poll"]},
         "ui_auth": bool(settings.ui_user),
@@ -236,7 +316,8 @@ def _save(body: AccountBody, account_id: int | None) -> dict:
             "posting_times": body.posting_times.strip(), "caption_template": body.caption_template.replace("\r\n", "\n"),
             "hashtags": body.hashtags.strip(), "hook_enabled": int(body.hook_enabled)}
     if body.access_token.strip():
-        data["access_token"] = body.access_token.strip()
+        # Pasted manually: expiry unknown
+        data.update(access_token=body.access_token.strip(), token_expires_at="", token_refreshed_at="")
     new_id = db.save_account(data, account_id)
     return _public_account(db.get_account(new_id))
 

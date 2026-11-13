@@ -4,7 +4,7 @@ import secrets
 import shutil
 import time
 
-from . import db, reddit, render
+from . import db, instagram, reddit, render
 from .captions import build_caption, hook_lines
 from .config import settings
 
@@ -52,6 +52,8 @@ def prepare(account_id: int, slot: str | None = None) -> dict:
         "account_id": account_id,
         "ig_user_id": account["ig_user_id"],
         "access_token": account["access_token"],
+        # Host + version for the Instagram API with Unified Login (n8n builds its URLs from this)
+        "graph_api_base": instagram.graph_api_base(),
         "video_url": media_url(media_file),
         "caption": caption,
         "reddit_url": "https://reddit.com" + item["permalink"],

@@ -3,7 +3,7 @@
 import { Eye, EyeOff, Film, Layers, Play, Plus, Send, TriangleAlert, X } from "lucide-react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react"
 import { PerformanceCard, PostingTimesCard, statsPath } from "@/components/cards"
 import { KpiCard } from "@/components/charts/KpiCard"
 import { PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
@@ -11,7 +11,7 @@ import { Sources } from "@/components/Sources"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, api, formatSlot, parseTimes, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
+import { accountBody, api, formatSlot, instagramConnectUrl, parseTimes, tokenDaysLeft, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 
 type Form = ReturnType<typeof accountBody>
@@ -111,6 +111,30 @@ export default function AccountPage() {
     load()
   }, [load])
 
+  // Back from the Meta login (/api/instagram/callback redirects here with ?ig=connected|error)
+  const igHandled = useRef<string | null>(null)
+  useEffect(() => {
+    const ig = params.get("ig")
+    if (!ig || igHandled.current === params.toString()) return
+    igHandled.current = params.toString()
+    if (ig === "connected") toast(params.get("ig_message") || "Instagram verbunden")
+    else toast(`Instagram-Verbindung fehlgeschlagen: ${params.get("ig_message") ?? "unbekannter Fehler"}`, "error")
+    reloadAll()
+    router.replace(id ? `/account?id=${id}` : "/account", { scroll: false })
+  }, [params, id, router, toast, reloadAll])
+
+  async function disconnectInstagram() {
+    if (!id) return
+    try {
+      const res = await api<Account>(`/accounts/${id}/instagram/disconnect`, { method: "POST" })
+      setAccount(res)
+      toast("Instagram getrennt")
+      reloadAll()
+    } catch (e) {
+      toast((e as Error).message, "error")
+    }
+  }
+
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }))
   const dirty = JSON.stringify(form) !== JSON.stringify(saved)
   const setTab = (t: Tab) => router.replace(`/account?id=${id}&tab=${t}`, { scroll: false })
@@ -196,19 +220,41 @@ export default function AccountPage() {
       <TimeChips value={form.posting_times} onChange={(v) => set("posting_times", v)} />
     </Panel>
   )
+  const daysLeft = account ? tokenDaysLeft(account) : null
   const instagram = (
-    <Panel title="Instagram" sub="Business- oder Creator-Account, verknüpft mit einer Facebook-Seite">
-      <label className="label">
-        Instagram-User-ID
-        <input className="field" value={form.ig_user_id} onChange={(e) => set("ig_user_id", e.target.value)} placeholder="1784…" inputMode="numeric" />
-      </label>
-      <label className="label">
-        <span>Access Token {account?.has_token && <span className="hint">•••• gespeichert, leer lassen zum Behalten</span>}</span>
-        <span className="relative">
-          <input className="field !pr-11" type={showToken ? "text" : "password"} autoComplete="off" value={form.access_token} onChange={(e) => set("access_token", e.target.value)} placeholder={account?.has_token ? "Neuen Token eintragen, um ihn zu ersetzen" : "Langlebiger Token"} />
-          <button type="button" className="icon-btn absolute right-1 top-1/2 !size-8 -translate-y-1/2" aria-label={showToken ? "Token verbergen" : "Token anzeigen"} onClick={() => setShowToken((x) => !x)}>{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-        </span>
-      </label>
+    <Panel title="Instagram" sub="Professionelles Instagram-Konto, verbunden per Login mit Instagram oder Facebook">
+      {account ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="min-w-48 flex-1">
+            {connected ? (
+              <>
+                <p className="font-medium text-ink">{account.ig_username ? `@${account.ig_username}` : `ID ${account.ig_user_id}`}</p>
+                <p className="caption">
+                  {daysLeft === null ? "Token läuft nicht ab" : daysLeft < 0 ? "Token abgelaufen, bitte neu verbinden" : `Token gültig noch ${daysLeft} Tage`}
+                </p>
+              </>
+            ) : <p className="caption">Noch nicht verbunden. Reels werden vorbereitet, aber nicht gepostet.</p>}
+          </div>
+          <a className={connected ? "btn btn-sm" : "btn btn-primary"} href={instagramConnectUrl(account.id)}>{connected ? "Neu verbinden" : "Mit Instagram verbinden"}</a>
+          {connected && <Menu items={[{ label: "Instagram trennen", danger: true, onSelect: disconnectInstagram }]} />}
+        </div>
+      ) : <p className="caption">Nach dem Anlegen verbindest du den Account mit einem Klick über Instagram oder Facebook.</p>}
+      <details className="group">
+        <summary className="cursor-pointer text-[13px] text-ink-3">Token manuell eintragen</summary>
+        <div className="mt-3 flex flex-col gap-4">
+          <label className="label">
+            Instagram-User-ID
+            <input className="field" value={form.ig_user_id} onChange={(e) => set("ig_user_id", e.target.value)} placeholder="1784…" inputMode="numeric" />
+          </label>
+          <label className="label">
+            <span>Access Token {account?.has_token && <span className="hint">•••• gespeichert, leer lassen zum Behalten</span>}</span>
+            <span className="relative">
+              <input className="field !pr-11" type={showToken ? "text" : "password"} autoComplete="off" value={form.access_token} onChange={(e) => set("access_token", e.target.value)} placeholder={account?.has_token ? "Neuen Token eintragen, um ihn zu ersetzen" : "Langlebiger Token"} />
+              <button type="button" className="icon-btn absolute right-1 top-1/2 !size-8 -translate-y-1/2" aria-label={showToken ? "Token verbergen" : "Token anzeigen"} onClick={() => setShowToken((x) => !x)}>{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+            </span>
+          </label>
+        </div>
+      </details>
     </Panel>
   )
   const content = (

@@ -14,6 +14,9 @@ export type Account = {
   id: number
   name: string
   ig_user_id: string
+  ig_username: string
+  token_expires_at: string
+  token_refreshed_at: string
   has_token: boolean
   active: boolean
   posting_times: string
@@ -105,6 +108,7 @@ export type SystemInfo = {
 export type SettingsInfo = {
   reddit: { configured: boolean; client_id_set: boolean; secret_set: boolean; user_agent: string }
   api: { key_set: boolean; public_base_url: string; last_n8n_poll: number | null }
+  instagram: { configured: boolean; app_id: string; config_id: string; redirect_uri: string; deauthorize_url: string; data_deletion_url: string; graph_api_base: string }
   ui_auth: boolean
   render: { encoder: string; x264_preset: string; width: number; height: number; loudness_lufs: number }
   automation: { slot_window_minutes: number; max_attempts_per_slot: number; media_retention_hours: number }
@@ -141,6 +145,15 @@ export function accountBody(a: Account, patch: Partial<Account> = {}) {
   }
 }
 
+/** Days until the Instagram token expires, null if unknown (manually pasted token). */
+export function tokenDaysLeft(a: Account): number | null {
+  if (!a.has_token || !a.token_expires_at) return null
+  return Math.floor((new Date(a.token_expires_at).getTime() - Date.now()) / 86_400_000)
+}
+
+/** Starts the Meta login (Unified Login, full page navigation, Meta redirects back to /account). */
+export const instagramConnectUrl = (accountId?: number) => `/ui-api/instagram/connect${accountId ? `?account_id=${accountId}` : ""}`
+
 export function parseTimes(raw: string): string[] {
   const out = new Set<string>()
   for (const part of raw.split(/[,; ]+/)) {
@@ -157,6 +170,7 @@ export function accountIssue(a: Account, posts: Post[] = []): AccountIssue {
   const last = posts.find((p) => p.account_id === a.id && (p.status === "published" || p.status === "failed"))
   if (last?.status === "failed") return { tone: "danger", label: "Fehler" }
   if (!a.ig_user_id || !a.has_token) return { tone: "warning", label: "Instagram fehlt" }
+  if (tokenDaysLeft(a) !== null && tokenDaysLeft(a)! < 7) return { tone: "warning", label: "Token läuft ab" }
   if (a.sources && a.sources.length === 0) return { tone: "warning", label: "Keine Quellen" }
   if (!a.active) return { tone: "muted", label: "pausiert" }
   return { tone: "success", label: "aktiv" }

@@ -47,13 +47,33 @@ Fehler → n8n-Error-Workflow → E-Mail
 6. **GPU-Encoding (optional)**: `ENCODER=vaapi` setzen und im Compose `devices: /dev/dri`
    einkommentieren. Klappt es nicht, wird automatisch auf CPU (libx264) zurückgefallen.
 
-## Instagram-Accounts vorbereiten
+## Instagram-Accounts verbinden (Unified Login)
 
-Jeder Account muss ein **Business- oder Creator-Account** sein und mit einer **Facebook-Seite**
-verknüpft sein. In einer Meta-App (developers.facebook.com) mit den Berechtigungen
-`instagram_basic`, `instagram_content_publish`, `pages_show_list` und `pages_read_engagement` einen
-langlebigen Token erzeugen und zusammen mit der Instagram-User-ID im Account eintragen.
-Die Anbindung in n8n folgt in Schritt 2.
+Neue Meta-Apps bieten nur noch die **Instagram API mit Unified Login** an (Facebook Login for
+Business mit einer Konfiguration). Der Login geht wahlweise mit Instagram oder Facebook, eine
+Facebook-Seite ist nicht nötig, die App muss aber einem Business-Portfolio gehören. API-Host ist
+`graph.facebook.com`. Der Token ist ein Systemnutzer-Token und läuft standardmäßig nie ab.
+
+1. App vom Typ **Business** mit dem Anwendungsfall *Messaging und Content auf Instagram verwalten*.
+2. *Anwendungsfälle → Instagram API → Anpassen → API setup with Unified login*:
+   **Neue Konfiguration erstellen** (mindestens `instagram_basic` und `instagram_content_publish`,
+   Werbekonto überspringbar), **Use this configuration**, als Weiterleitungs-URL
+   `https://reels.deinedomain.de/api/instagram/callback` eintragen und speichern.
+   Die Konfigurations-ID merken.
+3. *Facebook Login for Business → Einstellungen*: dieselbe URL unter **Gültige OAuth Redirect URIs**,
+   außerdem *Autorisierung der Callback-URL widerrufen* = `https://reels.deinedomain.de/api/instagram/deauthorize`
+   und *URL der Anfrage zur Löschung von Daten* = `https://reels.deinedomain.de/api/instagram/data-deletion`.
+4. Im Stack setzen: `META_APP_ID` und `META_APP_SECRET` (*App-Einstellungen → Allgemeines*) und
+   `META_CONFIG_ID` (aus Schritt 2).
+5. Jeden Instagram-Account als **Instagram-Tester** einladen (*App-Rollen → Rollen*) und die
+   Einladung auf instagram.com annehmen: Einstellungen → Website-Berechtigungen → Apps und Websites →
+   Tester-Einladungen. Für eigene Accounts reicht *Standard Access*, ein App Review ist nicht nötig.
+6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Werden beim Login mehrere
+   Instagram-Konten freigegeben, bekommt jedes seinen Token; fehlende Accounts werden pausiert angelegt.
+
+Deauthorize und Data deletion ruft Meta direkt vom Server auf. Deshalb in Cloudflare Access
+(wie bei `/media`) eine Bypass-Application für `reels.deinedomain.de/api/instagram` anlegen.
+Die drei Endpunkte sind durch den signierten `state` bzw. Metas `signed_request` geschützt.
 
 ## API (für n8n)
 
@@ -62,7 +82,7 @@ Alle `/api`-Aufrufe brauchen den Header `X-API-Key: <API_KEY>`. Doku: `/api/docs
 | Methode | Pfad | Zweck |
 |---|---|---|
 | GET | `/api/due` | Accounts mit fälligem Slot: `{"due":[{"account_id","name","slot"}]}` |
-| POST | `/api/accounts/{id}/prepare` | Body `{"slot": "..."}` → `post_id, ig_user_id, access_token, video_url, caption` oder `{"skipped": true, "reason": ...}` |
+| POST | `/api/accounts/{id}/prepare` | Body `{"slot": "..."}` → `post_id, ig_user_id, access_token, graph_api_base, video_url, caption` oder `{"skipped": true, "reason": ...}` |
 | POST | `/api/posts/{id}/result` | Body `{"status": "publishing|published|failed", "ig_media_id": "...", "error": "..."}` |
 | POST | `/api/cleanup` | alte Medien löschen |
 

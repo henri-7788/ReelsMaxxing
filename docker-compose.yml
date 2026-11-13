@@ -17,6 +17,9 @@ services:
       REDDIT_CLIENT_ID: ${REDDIT_CLIENT_ID}
       REDDIT_CLIENT_SECRET: ${REDDIT_CLIENT_SECRET}
       REDDIT_USER_AGENT: ${REDDIT_USER_AGENT:-linux:reels-manager:v1.0}
+      META_APP_ID: ${META_APP_ID:-}
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_CONFIG_ID: ${META_CONFIG_ID:-}
       ENCODER: ${ENCODER:-libx264}
       TZ: Europe/Berlin
     volumes:
