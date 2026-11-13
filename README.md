@@ -67,9 +67,13 @@ ist nicht nötig, jeder Account muss nur ein **Business- oder Creator-Account** 
 6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Token (60 Tage) und
    User-ID werden gespeichert und automatisch erneuert, bevor sie ablaufen.
 
-Die Callback-URLs liegen unter `/api/` und brauchen in Cloudflare Access **keine** Ausnahme
-(der Redirect läuft in deinem eigenen, schon angemeldeten Browser). Sie sind durch den signierten
-`state` bzw. Metas `signed_request` geschützt.
+Deauthorize und Data deletion ruft Meta direkt vom Server auf. Deshalb in Cloudflare Access
+(wie bei `/media`) eine Bypass-Application für `reels.deinedomain.de/api/instagram` anlegen.
+Die drei Endpunkte sind durch den signierten `state` bzw. Metas `signed_request` geschützt.
+
+**n8n**: Tokens aus Instagram Login funktionieren nur auf `graph.instagram.com`. In den Nodes
+*Create Reel Container*, *Check Container Status* und *Publish Reel* `https://graph.facebook.com/v22.0`
+durch `{{ $('Prepare Reel').item.json.graph_api_base }}` ersetzen (bzw. fest `https://graph.instagram.com/v27.0`).
 
 ## API (für n8n)
 
