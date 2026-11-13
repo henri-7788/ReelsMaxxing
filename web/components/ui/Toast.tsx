@@ -1,5 +1,6 @@
 "use client"
 
+import { X } from "lucide-react"
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react"
 
 type Toast = { id: number; text: string; kind: "ok" | "error" }
@@ -11,23 +12,26 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([])
+  const drop = useCallback((id: number) => setToasts((t) => t.filter((x) => x.id !== id)), [])
   const push = useCallback((text: string, kind: Toast["kind"] = "ok") => {
     const id = Date.now() + Math.random()
     setToasts((t) => [...t, { id, text, kind }])
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 4000)
-  }, [])
+    // Errors stay until closed (UIDesign.md 6.18)
+    if (kind === "ok") setTimeout(() => drop(id), 5000)
+  }, [drop])
   return (
     <Ctx.Provider value={push}>
       {children}
-      <div aria-live="polite" className="pointer-events-none fixed inset-x-0 bottom-6 z-[60] flex flex-col items-center gap-2 px-4">
+      <div aria-live="polite" className="pointer-events-none fixed inset-x-4 bottom-20 z-[60] flex flex-col items-center gap-2 md:inset-x-auto md:bottom-6 md:right-6 md:items-end">
         {toasts.map((t) => (
           <div
             key={t.id}
             role={t.kind === "error" ? "alert" : "status"}
-            className={`frost pointer-events-auto max-w-md px-5 py-3 text-sm font-medium ${t.kind === "error" ? "text-[#ffc2c2]" : ""}`}
-            style={{ borderRadius: 999 }}
+            className="pointer-events-auto flex w-full max-w-[360px] items-start gap-3 rounded-[10px] border border-line bg-surface py-3 pl-4 pr-2 text-ink shadow-lg"
+            style={{ borderLeft: `3px solid var(${t.kind === "error" ? "--danger" : "--success"})` }}
           >
-            {t.text}
+            <span className="flex-1 py-0.5">{t.text}</span>
+            <button type="button" className="icon-btn !size-7" aria-label="Schließen" onClick={() => drop(t.id)}><X size={16} /></button>
           </div>
         ))}
       </div>

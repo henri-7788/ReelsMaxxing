@@ -151,7 +151,7 @@ dunkles Layout).
 
 | Token | Light | Dark | Herkunft in der Vorlage | Verwendung |
 |---|---|---|---|---|
-| `--bg` | `#F3F4F8` | `#0E1015` | Hintergrund um das App-Fenster | Seitenhintergrund (außerhalb der Karten) |
+| `--bg` | `#F3F4F8` | `#0E1015` | Hintergrund um das App-Fenster | Fläche um den App-Rahmen (sichtbar ab 1600 px Breite). Der Inhaltsbereich selbst ist wie in der Vorlage `--surface` |
 | `--surface` | `#FFFFFF` | `#16191F` | Sidebar, Topbar, Karten | Karten, Sidebar, Topbar |
 | `--surface-2` | `#F7F7F9` | `#1D2027` | Hintergrund des Hell/Dunkel-Umschalters, Segmented „Month“ | Eingabefelder, Tabellenkopf, Segmented-Control-Hintergrund |
 | `--surface-hover` | `#F5F6F8` | `#22262E` | — | Zeilen-/Item-Hover |
@@ -1018,3 +1018,23 @@ Alles mit 🔧 braucht Daten oder Funktionen, die es im Backend (`app/`) heute n
 
 Entschieden (Henri): Theme folgt standardmäßig der Systemeinstellung, keine Glas-Optik,
 Design und Farben so genau wie möglich wie in der Vorlage.
+
+---
+
+## 15. Stand der Umsetzung
+
+Umgesetzt in `web/` (alle Seiten aus [Abschnitt 7](#7-seiten)) mit den Daten, die das Backend
+liefert. Neu im Backend dafür: `/ui-api/stats`, `/ui-api/system`, `/ui-api/settings`,
+`/ui-api/cleanup` und der Zeitpunkt der letzten n8n-Abfrage.
+
+Bewusst noch nicht enthalten, weil die Daten fehlen (siehe [Abschnitt 14](#14-offene-punkte-und-backend-bedarf)):
+
+* Views, Likes, Follower: Chart und Heatmap zählen stattdessen gepostete Reels, die dritte
+  Kennzahl ist „In Arbeit“.
+* Logs: abgeleitet aus dem Verlauf der Videos, keine eigene Ereignis-Tabelle.
+* Pipeline ohne Spalte „Gefunden“; „Geplant“ ist ein fertiges Video mit Slot.
+* Kalender zeigt die täglichen Zeiten und ist Lesesicht; Zeiten ändert man im Account.
+* Einstellungen sind Lesesicht (Werte kommen aus dem Portainer-Stack); keine eigenen
+  Bearbeitungs-Presets, kein Render-Fortschritt in Prozent, keine Thumbnails.
+* Aktionen „Neu rendern“, „Überspringen“, „Erneut versuchen“ und Caption pro Video bearbeiten.
+* Die Account-Auswahl wird im Browser gespeichert, nicht in der URL. Tastenkürzel: nur `Strg K`.

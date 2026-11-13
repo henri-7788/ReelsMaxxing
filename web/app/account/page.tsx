@@ -1,68 +1,91 @@
 "use client"
 
+import { Eye, EyeOff, Film, Layers, Play, Plus, Send, TriangleAlert, X } from "lucide-react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
-import { Suspense, useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
-import { GlassSurface } from "@/components/glass"
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react"
+import { PerformanceCard, PostingTimesCard, statsPath } from "@/components/cards"
+import { KpiCard } from "@/components/charts/KpiCard"
+import { PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
+import { Sources } from "@/components/Sources"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
-import { GlassButton } from "@/components/ui/GlassButton"
-import { PostList } from "@/components/ui/PostList"
+import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { api, formatSlot, type Account, type Post, type Source } from "@/lib/api"
+import { accountBody, api, formatSlot, parseTimes, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
+import { useApi, useData } from "@/lib/data"
 
-const DEFAULT_CAPTION = "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}"
+type Form = ReturnType<typeof accountBody>
+type Tab = "overview" | "content" | "schedule" | "history"
+const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: true, posting_times: "18:00", caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
 const PLACEHOLDERS = ["{title}", "{author}", "{subreddit}", "{permalink}", "{hashtags}"]
 
-type Form = {
-  name: string
-  ig_user_id: string
-  access_token: string
-  active: boolean
-  posting_times: string
-  caption_template: string
-  hashtags: string
-  hook_enabled: boolean
-}
-
-const EMPTY: Form = {
-  name: "",
-  ig_user_id: "",
-  access_token: "",
-  active: true,
-  posting_times: "12:00, 18:30",
-  caption_template: DEFAULT_CAPTION,
-  hashtags: "",
-  hook_enabled: true,
-}
-
-export default function AccountPage() {
+function Panel({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
   return (
-    <Suspense fallback={<div className="frost mt-14 h-96 animate-pulse" />}>
-      <AccountEditor />
-    </Suspense>
+    <Card>
+      <CardHeader title={title} sub={sub} />
+      <div className="flex flex-col gap-4">{children}</div>
+    </Card>
   )
 }
 
-function AccountEditor() {
+function TimeChips({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const times = parseTimes(value)
+  const [draft, setDraft] = useState("")
+  const add = () => {
+    if (!draft) return
+    onChange(parseTimes([...times, draft].join(",")).join(", "))
+    setDraft("")
+  }
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        {times.length === 0 && <span className="caption">Noch keine Zeiten. Ohne Zeiten wird nichts gepostet.</span>}
+        {times.map((t) => (
+          <span key={t} className="tag !h-8 !pr-1 text-[13px] tabular">
+            {t}
+            <button type="button" className="icon-btn !size-6" aria-label={`${t} entfernen`} onClick={() => onChange(times.filter((x) => x !== t).join(", "))}><X size={14} /></button>
+          </span>
+        ))}
+      </div>
+      <div className="flex items-end gap-2">
+        <label className="label w-36">
+          Neue Zeit
+          <input className="field tabular" type="time" value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); add() } }} />
+        </label>
+        <button type="button" className="btn" onClick={add} disabled={!draft}><Plus size={16} /> Zeit</button>
+      </div>
+      <p className="hint">Die Zeiten gelten täglich. Ein Slot bleibt nach seiner Uhrzeit noch eine Weile fällig, falls n8n später abfragt.</p>
+    </div>
+  )
+}
+
+export default function AccountPage() {
   const params = useSearchParams()
   const router = useRouter()
   const toast = useToast()
+  const { reload: reloadAll } = useData()
   const id = Number(params.get("id")) || null
+  const tab = (["overview", "content", "schedule", "history"].includes(params.get("tab") ?? "") ? params.get("tab") : "overview") as Tab
 
   const [account, setAccount] = useState<Account | null>(null)
   const [sources, setSources] = useState<Source[]>([])
   const [posts, setPosts] = useState<Post[]>([])
   const [form, setForm] = useState<Form>(EMPTY)
-  const [loading, setLoading] = useState(!!id)
-  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState<Form>(EMPTY)
+  const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [showToken, setShowToken] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const stats = useApi<Stats>(id ? statsPath(id, 30) : null, 60_000)
+  const drawer = usePostDrawer()
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (keepForm = false) => {
     if (!id) {
       setAccount(null)
       setForm(EMPTY)
+      setSaved(EMPTY)
       setLoading(false)
       return
     }
@@ -71,16 +94,11 @@ function AccountEditor() {
       setAccount(d.account)
       setSources(d.sources)
       setPosts(d.posts)
-      setForm({
-        name: d.account.name,
-        ig_user_id: d.account.ig_user_id,
-        access_token: "",
-        active: d.account.active,
-        posting_times: d.account.posting_times,
-        caption_template: d.account.caption_template,
-        hashtags: d.account.hashtags,
-        hook_enabled: d.account.hook_enabled,
-      })
+      if (!keepForm) {
+        setForm(accountBody(d.account))
+        setSaved(accountBody(d.account))
+      }
+      setError(null)
     } catch (e) {
       setError((e as Error).message)
     } finally {
@@ -89,25 +107,31 @@ function AccountEditor() {
   }, [id])
 
   useEffect(() => {
+    setLoading(true)
     load()
   }, [load])
 
   const set = <K extends keyof Form>(k: K, v: Form[K]) => setForm((f) => ({ ...f, [k]: v }))
+  const dirty = JSON.stringify(form) !== JSON.stringify(saved)
+  const setTab = (t: Tab) => router.replace(`/account?id=${id}&tab=${t}`, { scroll: false })
 
-  async function save(e: FormEvent) {
-    e.preventDefault()
+  async function save(e?: FormEvent) {
+    e?.preventDefault()
     setSaving(true)
     setError(null)
     try {
-      const saved = await api<Account>(id ? `/accounts/${id}` : "/accounts", { method: id ? "PUT" : "POST", body: form })
+      const res = await api<Account>(id ? `/accounts/${id}` : "/accounts", { method: id ? "PUT" : "POST", body: form })
       toast(id ? "Gespeichert" : "Account angelegt")
-      if (!id) router.replace(`/account?id=${saved.id}`)
+      reloadAll()
+      if (!id) router.replace(`/account?id=${res.id}&tab=content`)
       else {
-        setAccount(saved)
-        set("access_token", "")
+        setAccount(res)
+        setForm(accountBody(res))
+        setSaved(accountBody(res))
       }
     } catch (e) {
       setError((e as Error).message)
+      toast((e as Error).message, "error")
     } finally {
       setSaving(false)
     }
@@ -117,8 +141,8 @@ function AccountEditor() {
     if (!id) return
     try {
       await api(`/accounts/${id}/preview`, { method: "POST" })
-      toast("Vorschau wird im Hintergrund gerendert (ein paar Minuten). Sie erscheint unten im Verlauf.")
-      setTimeout(load, 5000)
+      toast("Vorschau wird im Hintergrund gerendert (ein paar Minuten). Sie erscheint im Verlauf.")
+      setTimeout(() => load(true), 5000)
     } catch (e) {
       toast((e as Error).message, "error")
     }
@@ -130,286 +154,172 @@ function AccountEditor() {
     try {
       await api(`/accounts/${id}`, { method: "DELETE" })
       toast("Account gelöscht")
-      router.push("/")
+      reloadAll()
+      router.push("/accounts")
     } catch (e) {
       toast((e as Error).message, "error")
       setDeleting(false)
     }
   }
 
-  const times = useMemo(
-    () => form.posting_times.split(/[,; ]+/).map((t) => t.trim()).filter(Boolean),
-    [form.posting_times],
-  )
-
   const captionPreview = useMemo(
-    () =>
-      form.caption_template
-        .replaceAll("{title}", "Dieser Hund hat keine Angst vor Wasser")
-        .replaceAll("{author}", "doglover42")
-        .replaceAll("{subreddit}", sources[0]?.subreddit ?? "aww")
-        .replaceAll("{permalink}", "https://reddit.com/r/aww/…")
-        .replaceAll("{hashtags}", form.hashtags),
+    () => form.caption_template
+      .replaceAll("{title}", "Dieser Hund hat keine Angst vor Wasser")
+      .replaceAll("{author}", "doglover42")
+      .replaceAll("{subreddit}", sources[0]?.subreddit ?? "aww")
+      .replaceAll("{permalink}", "https://reddit.com/r/aww/…")
+      .replaceAll("{hashtags}", form.hashtags),
     [form.caption_template, form.hashtags, sources],
   )
 
-  if (loading) return <div className="frost mt-14 h-96 animate-pulse" />
+  if (loading) return <div className="flex flex-col gap-6"><Skeleton className="h-16 !rounded-[16px]" /><Skeleton className="h-96 !rounded-[16px]" /></div>
   if (id && !account) {
-    return (
-      <div className="frost mt-14 flex flex-col items-center gap-3 px-6 py-12 text-center">
-        <p>{error ?? "Account nicht gefunden."}</p>
-        <Link href="/" className="btn-ghost">← Zur Übersicht</Link>
+    return <Card><ErrorState message={error ?? "Account nicht gefunden."} onRetry={() => load()} /><div className="pb-6 text-center"><Link href="/accounts" className="btn btn-sm">Zu den Accounts</Link></div></Card>
+  }
+
+  const connected = !!account?.ig_user_id && !!account?.has_token
+  const s = stats.data
+  const ready = posts.filter((p) => p.status === "ready" || p.status === "preview").length
+  const failed7 = s?.week.failed ?? 0
+
+  const basics = (
+    <Panel title="Grundlagen">
+      <label className="label">
+        Name
+        <input className="field" required maxLength={100} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="z. B. Tiere" />
+      </label>
+      <Switch checked={form.active} onChange={(v) => set("active", v)}>Aktiv, automatisch posten</Switch>
+    </Panel>
+  )
+  const schedule = (
+    <Panel title="Posting-Zeiten" sub="Uhrzeiten, zu denen dieser Account ein Reel postet">
+      <TimeChips value={form.posting_times} onChange={(v) => set("posting_times", v)} />
+    </Panel>
+  )
+  const instagram = (
+    <Panel title="Instagram" sub="Business- oder Creator-Account, verknüpft mit einer Facebook-Seite">
+      <label className="label">
+        Instagram-User-ID
+        <input className="field" value={form.ig_user_id} onChange={(e) => set("ig_user_id", e.target.value)} placeholder="1784…" inputMode="numeric" />
+      </label>
+      <label className="label">
+        <span>Access Token {account?.has_token && <span className="hint">•••• gespeichert, leer lassen zum Behalten</span>}</span>
+        <span className="relative">
+          <input className="field !pr-11" type={showToken ? "text" : "password"} autoComplete="off" value={form.access_token} onChange={(e) => set("access_token", e.target.value)} placeholder={account?.has_token ? "Neuen Token eintragen, um ihn zu ersetzen" : "Langlebiger Token"} />
+          <button type="button" className="icon-btn absolute right-1 top-1/2 !size-8 -translate-y-1/2" aria-label={showToken ? "Token verbergen" : "Token anzeigen"} onClick={() => setShowToken((x) => !x)}>{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+        </span>
+      </label>
+    </Panel>
+  )
+  const content = (
+    <Panel title="Inhalt">
+      <Switch checked={form.hook_enabled} onChange={(v) => set("hook_enabled", v)}>Titel als Hook-Text oben im Video</Switch>
+      <label className="label">
+        Caption-Vorlage
+        <textarea className="field min-h-36 font-mono !text-[13px]" rows={6} value={form.caption_template} onChange={(e) => set("caption_template", e.target.value)} />
+      </label>
+      <div className="-mt-1 flex flex-wrap gap-1.5" aria-label="Platzhalter einfügen">
+        {PLACEHOLDERS.map((p) => <button key={p} type="button" className="tag font-mono hover:border-line-strong" onClick={() => set("caption_template", form.caption_template + p)}>{p}</button>)}
       </div>
+      <label className="label">
+        Hashtags
+        <input className="field" value={form.hashtags} onChange={(e) => set("hashtags", e.target.value)} placeholder="#funny #animals" />
+      </label>
+      <div>
+        <div className="mb-1.5 flex justify-between"><span className="text-[13px] font-medium text-label">Caption-Vorschau</span><span className="caption tabular">{captionPreview.length} / 2.200</span></div>
+        <pre className="whitespace-pre-wrap rounded-[10px] border border-line bg-surface-2 p-3 font-sans text-ink-2">{captionPreview}</pre>
+      </div>
+    </Panel>
+  )
+
+  if (!account) {
+    return (
+      <form onSubmit={save} className="mx-auto flex max-w-2xl flex-col gap-4 md:gap-6">
+        <div><h2 className="page-title">Neuer Account</h2><p className="mt-1">Subreddits fügst du im nächsten Schritt hinzu.</p></div>
+        {basics}{schedule}{instagram}{content}
+        {error && <p role="alert" className="rounded-[10px] border border-danger bg-danger-bg px-4 py-3 text-ink">{error}</p>}
+        <div className="flex justify-end gap-2"><Link href="/accounts" className="btn">Abbrechen</Link><button type="submit" className="btn btn-primary" disabled={saving}>{saving ? "Legt an…" : "Account anlegen"}</button></div>
+      </form>
     )
   }
 
   return (
-    <div className="flex flex-col gap-10">
-      <header className="flex flex-col gap-5 pt-6 md:flex-row md:items-end md:justify-between">
-        <div>
-          <Link href="/" className="text-sm font-medium text-muted hover:text-white">← Übersicht</Link>
-          <h1 className="mt-1 text-4xl font-bold tracking-tight sm:text-5xl">{account ? account.name : "Neuer Account"}</h1>
-          {account && (
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-              <span className={`status ${account.active ? "s-published" : "s-rendering"}`}>{account.active ? "aktiv" : "pausiert"}</span>
-              <span className={`status ${account.ig_user_id && account.has_token ? "s-ready" : "s-rendering"}`}>
-                {account.ig_user_id && account.has_token ? "Instagram verbunden" : "Instagram fehlt"}
-              </span>
-              {account.active && <span className="text-muted">Nächster Slot: {formatSlot(account.next_slot)}</span>}
-            </div>
-          )}
-        </div>
-        {account && (
-          <div className="flex flex-wrap gap-3">
-            <GlassButton onClick={preview} disabled={!sources.length} title={sources.length ? undefined : "Erst Subreddits hinzufügen"}>
-              ▶ Vorschau rendern
-            </GlassButton>
+    <div className="flex flex-col gap-4 md:gap-6">
+      <header className="flex flex-wrap items-center gap-4">
+        <AccountAvatar account={account} size={48} />
+        <div className="min-w-48 flex-1">
+          <h2 className="page-title truncate">{account.name}</h2>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
+            <TonePill tone={account.active ? "success" : "muted"}>{account.active ? "aktiv" : "pausiert"}</TonePill>
+            <TonePill tone={connected ? "success" : "warning"}>{connected ? "Instagram verbunden" : "Instagram fehlt"}</TonePill>
+            {sources.length === 0 && <TonePill tone="warning">Keine Quellen</TonePill>}
+            {account.active && <span className="caption">Nächster Slot: {formatSlot(account.next_slot)}</span>}
           </div>
-        )}
+        </div>
+        <button type="button" className="btn" onClick={preview} disabled={!sources.length} title={sources.length ? undefined : "Erst Subreddits hinzufügen"}><Play size={16} /> Vorschau rendern</button>
+        <Menu items={[{ label: "Account löschen", danger: true, onSelect: () => setConfirmDelete(true) }]} />
       </header>
 
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-        <form onSubmit={save} className="flex flex-col gap-6" aria-describedby={error ? "form-error" : undefined}>
-          <Panel title="Grundlagen">
-            <label className="label">
-              Name
-              <input className="field" required maxLength={100} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="z. B. Tiere" />
-            </label>
-            <Switch checked={form.active} onChange={(v) => set("active", v)}>Aktiv – automatisch posten</Switch>
-            <label className="label">
-              <span>Posting-Zeiten <span className="hint">HH:MM, mit Komma getrennt</span></span>
-              <input className="field" value={form.posting_times} onChange={(e) => set("posting_times", e.target.value)} placeholder="09:00, 13:00, 19:30" />
-            </label>
-            {times.length > 0 && (
-              <div className="-mt-2 flex flex-wrap gap-1.5">
-                {times.map((t, i) => <span key={i} className="rounded-full bg-white/10 px-2.5 py-1 text-xs tabular-nums">🕒 {t}</span>)}
-              </div>
-            )}
-          </Panel>
-
-          <Panel title="Instagram">
-            <label className="label">
-              <span>Instagram-User-ID <span className="hint">Business- oder Creator-Account</span></span>
-              <input className="field" value={form.ig_user_id} onChange={(e) => set("ig_user_id", e.target.value)} placeholder="1784…" inputMode="numeric" />
-            </label>
-            <label className="label">
-              <span>
-                Access Token{" "}
-                {account?.has_token && <span className="hint">gesetzt – leer lassen zum Behalten</span>}
-              </span>
-              <input className="field" type="password" autoComplete="off" value={form.access_token} onChange={(e) => set("access_token", e.target.value)} placeholder={account?.has_token ? "••••••••" : "Langlebiger Token"} />
-            </label>
-          </Panel>
-
-          <Panel title="Inhalt">
-            <Switch checked={form.hook_enabled} onChange={(v) => set("hook_enabled", v)}>Titel als Hook-Text oben im Video</Switch>
-            <label className="label">
-              Caption-Vorlage
-              <textarea className="field min-h-36 font-mono text-sm" rows={6} value={form.caption_template} onChange={(e) => set("caption_template", e.target.value)} />
-            </label>
-            <div className="-mt-2 flex flex-wrap gap-1.5" aria-label="Platzhalter einfügen">
-              {PLACEHOLDERS.map((p) => (
-                <button key={p} type="button" className="rounded-full bg-white/10 px-2.5 py-1 font-mono text-xs hover:bg-white/20" onClick={() => set("caption_template", form.caption_template + p)}>
-                  {p}
-                </button>
-              ))}
-            </div>
-            <label className="label">
-              Hashtags
-              <input className="field" value={form.hashtags} onChange={(e) => set("hashtags", e.target.value)} placeholder="#funny #animals" />
-            </label>
-            <details className="text-sm">
-              <summary className="cursor-pointer text-muted hover:text-white">Caption-Vorschau</summary>
-              <pre className="mt-2 whitespace-pre-wrap rounded-2xl bg-black/30 p-4 font-sans text-sm leading-relaxed">{captionPreview}</pre>
-            </details>
-          </Panel>
-
-          {error && <p id="form-error" role="alert" className="frost px-5 py-3 text-sm text-[#ffc2c2]">{error}</p>}
-          <div className="flex items-center gap-4">
-            <GlassButton type="submit" tone="accent" size="lg" disabled={saving}>{saving ? "Speichert…" : id ? "Speichern" : "Account anlegen"}</GlassButton>
-          </div>
-        </form>
-
-        {account && (
-          <aside className="flex flex-col gap-6">
-            <Sources accountId={account.id} sources={sources} onChange={setSources} />
-            <div className="frost flex flex-col gap-3 px-6 py-5 text-sm">
-              <h2 className="text-base font-semibold">Gefahrenzone</h2>
-              <p className="text-muted">Löscht den Account mit allen Subreddits und dem Verlauf.</p>
-              <button type="button" className="btn-ghost btn-danger w-fit" onClick={() => setConfirmDelete(true)}>Account löschen</button>
-            </div>
-          </aside>
-        )}
+      <div className="max-w-full overflow-x-auto">
+        <Segmented<Tab> label="Bereich" value={tab} onChange={setTab} options={[{ value: "overview", label: "Übersicht" }, { value: "content", label: "Inhalt & Quellen" }, { value: "schedule", label: "Zeitplan" }, { value: "history", label: "Verlauf" }]} />
       </div>
 
-      {account && (
-        <section aria-labelledby="hist-h" className="flex flex-col gap-4">
-          <h2 id="hist-h" className="text-xl font-semibold">Verlauf</h2>
-          <PostList posts={posts} showAccount={false} />
-        </section>
+      {tab === "overview" && (
+        <>
+          <KpiCard row loading={stats.loading && !s} items={[
+            { label: "Gepostet (7 Tage)", value: s?.week.published ?? "–", icon: Send, delta: s ? trend(s.week.published, s.previous_week.published) : null },
+            { label: "Videos auf Vorrat", value: ready, icon: Layers, note: "bereit oder Vorschau" },
+            { label: "Gepostet gesamt", value: s?.by_status.published ?? 0, icon: Film, note: "seit Anlage des Accounts" },
+            { label: "Fehler (7 Tage)", value: failed7, icon: TriangleAlert, delta: s ? trend(failed7, s.previous_week.failed) : null, lowerIsBetter: true },
+          ]} />
+          <div className="grid grid-cols-12 gap-4 md:gap-6">
+            <PerformanceCard accountId={account.id} className="col-span-12 xl:col-span-7" />
+            <PostingTimesCard accountId={account.id} account={account} className="col-span-12 xl:col-span-5" />
+          </div>
+          <Card pad={false}>
+            <div className="card-pad !pb-0"><CardHeader title="Letzte Videos"><button type="button" className="btn btn-sm" onClick={() => setTab("history")}>Verlauf</button></CardHeader></div>
+            <PostTable posts={posts.slice(0, 5)} onOpen={drawer.open} showAccount={false} empty="Noch keine Videos für diesen Account." />
+          </Card>
+        </>
       )}
 
-      <ConfirmDialog
-        open={confirmDelete}
-        title={`„${account?.name}“ löschen?`}
-        confirmLabel="Endgültig löschen"
-        onConfirm={remove}
-        onClose={() => setConfirmDelete(false)}
-        busy={deleting}
-      >
+      {tab === "content" && (
+        <div className="grid grid-cols-12 gap-4 md:gap-6">
+          <div className="col-span-12 flex flex-col gap-4 md:gap-6 xl:col-span-7">{basics}{content}{instagram}</div>
+          <div className="col-span-12 flex flex-col gap-4 md:gap-6 xl:col-span-5">
+            <Sources accountId={account.id} sources={sources} stats={s?.sources} onChange={(next) => { setSources(next); reloadAll() }} />
+            <section className="card card-pad !border-danger">
+              <h2 className="card-title">Gefahrenzone</h2>
+              <p className="mt-1">Löscht den Account mit allen Subreddits und dem Verlauf.</p>
+              <button type="button" className="btn btn-danger mt-4" onClick={() => setConfirmDelete(true)}>Account löschen</button>
+            </section>
+          </div>
+        </div>
+      )}
+
+      {tab === "schedule" && (
+        <div className="grid grid-cols-12 gap-4 md:gap-6">
+          <div className="col-span-12 xl:col-span-5">{schedule}</div>
+          <PostingTimesCard accountId={account.id} account={{ ...account, posting_times: form.posting_times }} className="col-span-12 xl:col-span-7" />
+        </div>
+      )}
+
+      {tab === "history" && (
+        <Card pad={false}><PostTable posts={posts} onOpen={drawer.open} showAccount={false} empty="Noch keine Videos für diesen Account." /></Card>
+      )}
+
+      {dirty && (
+        <div className="sticky bottom-20 z-20 flex flex-wrap items-center gap-3 rounded-[16px] border border-line bg-surface px-4 py-3 shadow-lg md:bottom-6">
+          <span className="flex-1 font-medium text-ink">Ungespeicherte Änderungen</span>
+          <button type="button" className="btn" onClick={() => setForm(saved)} disabled={saving}>Verwerfen</button>
+          <button type="button" className="btn btn-primary" onClick={() => save()} disabled={saving}>{saving ? "Speichert…" : "Speichern"}</button>
+        </div>
+      )}
+
+      <ConfirmDialog open={confirmDelete} title={`„${account.name}“ löschen?`} confirmLabel="Endgültig löschen" onConfirm={remove} onClose={() => setConfirmDelete(false)} busy={deleting} typeToConfirm={account.name}>
         Subreddits und Verlauf dieses Accounts werden ebenfalls gelöscht. Das lässt sich nicht rückgängig machen.
       </ConfirmDialog>
+      <VideoDrawer post={drawer.post} onClose={drawer.close} />
     </div>
-  )
-}
-
-function Panel({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <GlassSurface variant="panel" layout="fill" intensity="subtle" padding="24px 26px">
-      <fieldset className="flex w-full flex-col gap-5">
-        <legend className="mb-4 text-lg font-semibold">{title}</legend>
-        {children}
-      </fieldset>
-    </GlassSurface>
-  )
-}
-
-function Switch({ checked, onChange, children }: { checked: boolean; onChange: (v: boolean) => void; children: ReactNode }) {
-  return (
-    <label className="switch">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span className="track" aria-hidden="true" />
-      <span>{children}</span>
-    </label>
-  )
-}
-
-const SORT_LABEL: Record<string, string> = { top: "Top", hot: "Hot", rising: "Rising", new: "Neu" }
-const TIME_LABEL: Record<string, string> = { hour: "Stunde", day: "Tag", week: "Woche", month: "Monat", year: "Jahr", all: "immer" }
-
-function Sources({ accountId, sources, onChange }: { accountId: number; sources: Source[]; onChange: (s: Source[]) => void }) {
-  const toast = useToast()
-  const [sub, setSub] = useState("")
-  const [sort, setSort] = useState("top")
-  const [timeFilter, setTimeFilter] = useState("day")
-  const [minScore, setMinScore] = useState(500)
-  const [minDur, setMinDur] = useState(5)
-  const [maxDur, setMaxDur] = useState(90)
-  const [nsfw, setNsfw] = useState(false)
-  const [busy, setBusy] = useState(false)
-
-  async function add(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
-    try {
-      const d = await api<{ sources: Source[] }>(`/accounts/${accountId}/sources`, {
-        method: "POST",
-        body: { subreddit: sub, sort, time_filter: timeFilter, min_score: minScore, min_duration: minDur, max_duration: maxDur, allow_nsfw: nsfw },
-      })
-      onChange(d.sources)
-      setSub("")
-      toast(`r/${sub.replace(/^r\//, "")} hinzugefügt`)
-    } catch (e) {
-      toast((e as Error).message, "error")
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function remove(s: Source) {
-    try {
-      await api(`/sources/${s.id}`, { method: "DELETE" })
-      onChange(sources.filter((x) => x.id !== s.id))
-    } catch (e) {
-      toast((e as Error).message, "error")
-    }
-  }
-
-  return (
-    <GlassSurface variant="panel" layout="fill" intensity="subtle" padding="24px 26px">
-      <div className="flex w-full flex-col gap-5">
-        <h2 className="text-lg font-semibold">Subreddits</h2>
-        {sources.length === 0 ? (
-          <p className="text-sm text-muted">Noch keine Subreddits. Ohne Quelle wird nichts gepostet.</p>
-        ) : (
-          <ul className="flex flex-col divide-y divide-white/10 overflow-hidden rounded-2xl bg-black/20">
-            {sources.map((s) => (
-              <li key={s.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div className="min-w-0">
-                  <div className="truncate font-medium">r/{s.subreddit}</div>
-                  <div className="text-xs text-muted">
-                    {SORT_LABEL[s.sort] ?? s.sort}
-                    {s.sort === "top" && ` / ${TIME_LABEL[s.time_filter] ?? s.time_filter}`} · ≥ {s.min_score} ▲ · {s.min_duration}–{s.max_duration} s
-                    {s.allow_nsfw ? " · NSFW" : ""}
-                  </div>
-                </div>
-                <button type="button" className="btn-ghost btn-danger !px-3 !py-1.5 text-xs" onClick={() => remove(s)} aria-label={`r/${s.subreddit} entfernen`}>
-                  Entfernen
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <form onSubmit={add} className="flex flex-col gap-3 border-t border-white/10 pt-5">
-          <label className="label">
-            Subreddit hinzufügen
-            <input className="field" required value={sub} onChange={(e) => setSub(e.target.value)} placeholder="z. B. aww" />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
-            <label className="label">
-              Sortierung
-              <select className="field" value={sort} onChange={(e) => setSort(e.target.value)}>
-                {Object.entries(SORT_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
-            <label className="label">
-              Zeitraum
-              <select className="field" value={timeFilter} onChange={(e) => setTimeFilter(e.target.value)} disabled={sort !== "top"}>
-                {Object.entries(TIME_LABEL).filter(([v]) => v !== "hour").map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select>
-            </label>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            <label className="label">
-              Min. ▲
-              <input className="field" type="number" min={0} value={minScore} onChange={(e) => setMinScore(+e.target.value)} />
-            </label>
-            <label className="label">
-              Min. s
-              <input className="field" type="number" min={0} value={minDur} onChange={(e) => setMinDur(+e.target.value)} />
-            </label>
-            <label className="label">
-              Max. s
-              <input className="field" type="number" min={1} max={900} value={maxDur} onChange={(e) => setMaxDur(+e.target.value)} />
-            </label>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <Switch checked={nsfw} onChange={setNsfw}>NSFW erlauben</Switch>
-            <button type="submit" className="btn-ghost !bg-white/20" disabled={busy}>{busy ? "…" : "+ Hinzufügen"}</button>
-          </div>
-        </form>
-      </div>
-    </GlassSurface>
   )
 }
