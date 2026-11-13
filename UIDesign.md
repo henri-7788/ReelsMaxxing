@@ -888,7 +888,7 @@ eine Aktion. Zentriert, 32 px Innenabstand.
   `<html>` gesetzt; ohne Eintrag gilt die Media-Query. Ein kleines
   Inline-Skript im `<head>` setzt das Attribut **vor** dem ersten Paint (kein Aufblitzen).
 * `color-scheme: light` bzw. `dark` passend setzen (native Scrollbars, Datumsfelder).
-* `<meta name="theme-color">` je Theme: `#F4F6FA` / `#0B1020`.
+* `<meta name="theme-color">` je Theme: `#F3F4F8` / `#0E1015`.
 
 ### 9.2 Regeln für Dark
 
