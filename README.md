@@ -14,10 +14,10 @@ Fehler → n8n-Error-Workflow → E-Mail
 
 ## Was der Container macht
 
-* **Weboberfläche** (`/`): Accounts, Posting-Zeiten, Subreddits mit Filtern (Sortierung, Upvotes,
-  Länge, NSFW), Caption-Vorlage, Hashtags, Verlauf und Vorschau-Rendering. Gebaut mit Next.js im
-  Liquid-Glass-Stil ([`web/`](web), siehe unten). Volle Lichtbrechung nur in Chrome/Edge; Safari und
-  Firefox zeigen Blur und Ränder.
+* **Weboberfläche** (`/`): Dashboard mit Kennzahlen, Heatmap der Posting-Zeiten, Verlauf und
+  Auslastung des Mini-PCs; dazu Accounts, Warteschlange (Pipeline), Kalender, Statistiken, Quellen,
+  Logs, Einstellungen und System. Hell und Dunkel, Standard folgt dem Gerät. Gebaut mit Next.js
+  ([`web/`](web)), Design nach [`UIDesign.md`](UIDesign.md).
 * **Reddit**: offizielle API (App-only OAuth). Nimmt das Video mit den meisten Upvotes, das noch
   nie gepostet wurde (über alle Accounts hinweg, kein Video doppelt).
 * **Rendering** (ffmpeg): 1080×1920, Original mittig auf unscharfem Hintergrund, Titel als Hook
@@ -71,16 +71,20 @@ Ein Slot ist fällig, sobald seine Uhrzeit erreicht ist, für bis zu 90 Minuten
 
 ## Weboberfläche (`web/`)
 
-Next.js 16 + React 19 + Tailwind 4 mit [`liquid-glass-react`](https://github.com/rdev/liquid-glass-react).
+Next.js 16 + React 19 + Tailwind 4, Icons von `lucide-react`, Schrift Inter (selbst gehostet).
 Die Oberfläche wird als **statischer Export** gebaut (`output: "export"`): Node.js läuft nur beim
 Docker-Build (Stage 1), im fertigen Container liefert FastAPI nur noch HTML/JS/CSS aus. Der
-Mini-PC hat zur Laufzeit also keinen zusätzlichen Prozess. Der erste Build in Portainer dauert
-dadurch ein paar Minuten länger.
+Mini-PC hat zur Laufzeit also keinen zusätzlichen Prozess.
 
-* Glas-Komponenten: `web/components/glass/` (`GlassSurface`, nicht `LiquidGlass` direkt verwenden).
+* Design-Tokens (Farben, Radien, Schatten, Light/Dark) stehen in `web/app/globals.css`, die
+  Vorgaben dazu in [`UIDesign.md`](UIDesign.md).
+* Rahmen (Sidebar, Topbar, Tab-Leiste am Handy): `web/components/shell/`. Diagramme als eigenes
+  SVG ohne Chart-Bibliothek: `web/components/charts/`.
 * Daten holt die Oberfläche über `/ui-api/...` (gleicher Schutz wie die Seiten: Cloudflare Access
-  bzw. Basic Auth). Die n8n-API unter `/api/...` mit `X-API-Key` ist unverändert.
-* Alte Links `/accounts/<id>` leiten auf `/account?id=<id>` um.
+  bzw. Basic Auth), u. a. `/ui-api/stats`, `/ui-api/system` und `/ui-api/settings`. Die n8n-API
+  unter `/api/...` mit `X-API-Key` ist unverändert.
+* Alte Links `/accounts/<id>` leiten auf `/account?id=<id>` um, `/posts` auf den Verlauf in der
+  Warteschlange.
 
 ## Entwicklung
 

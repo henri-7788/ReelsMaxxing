@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, pipeline, scheduler
+from . import db, pipeline, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -25,6 +25,7 @@ BASE = Path(__file__).parent
 async def lifespan(_app: FastAPI):
     db.init_db()
     pipeline.cleanup_media()
+    system.start_sampler()
     yield
 
 
@@ -89,6 +90,7 @@ class ResultBody(BaseModel):
 
 @app.get("/api/due", dependencies=[Depends(require_api_key)])
 def api_due():
+    system.mark_n8n_poll()
     return {"due": scheduler.due_accounts()}
 
 
@@ -179,8 +181,43 @@ def ui_overview():
 
 
 @ui.get("/posts")
-def ui_posts(limit: int = 200):
-    return {"posts": db.list_posts(max(1, min(limit, 500)))}
+def ui_posts(limit: int = 200, account_id: int | None = None):
+    return {"posts": db.list_posts(max(1, min(limit, 500)), account_id)}
+
+
+@ui.get("/stats")
+def ui_stats(account_id: int | None = None, days: int = 30):
+    return stats.summary(account_id, max(1, min(days, 366)))
+
+
+@ui.get("/system")
+def ui_system():
+    return system.snapshot()
+
+
+@ui.get("/settings")
+def ui_settings():
+    """Read-only view of the configuration. Secrets are never sent, only whether they are set."""
+    return {
+        "reddit": {"configured": bool(settings.reddit_client_id and settings.reddit_client_secret),
+                   "client_id_set": bool(settings.reddit_client_id), "secret_set": bool(settings.reddit_client_secret),
+                   "user_agent": settings.reddit_user_agent},
+        "api": {"key_set": bool(settings.api_key), "public_base_url": settings.public_base_url,
+                "last_n8n_poll": system.snapshot()["last_n8n_poll"]},
+        "ui_auth": bool(settings.ui_user),
+        "render": {"encoder": settings.encoder, "x264_preset": settings.x264_preset, "width": 1080, "height": 1920,
+                   "loudness_lufs": -14},
+        "automation": {"slot_window_minutes": settings.slot_window_minutes,
+                       "max_attempts_per_slot": scheduler.MAX_ATTEMPTS_PER_SLOT,
+                       "media_retention_hours": settings.media_retention_hours},
+        "timezone": settings.timezone,
+        "data_dir": str(settings.data_dir),
+    }
+
+
+@ui.post("/cleanup")
+def ui_cleanup():
+    return {"removed": pipeline.cleanup_media()}
 
 
 @ui.get("/accounts/{account_id}")
@@ -290,7 +327,7 @@ def page_account_new():
     return RedirectResponse("/account", status_code=307)
 
 
-@app.get("/accounts/{account_id}")
+@app.get("/accounts/{account_id:int}")
 def page_account_legacy(account_id: int):
     return RedirectResponse(f"/account?id={account_id}", status_code=307)
 

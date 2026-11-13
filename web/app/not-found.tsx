@@ -1,10 +1,15 @@
+"use client"
+
+import { SearchX } from "lucide-react"
 import Link from "next/link"
+import { Card, EmptyState } from "@/components/ui/kit"
 
 export default function NotFound() {
   return (
-    <div className="frost mt-14 flex flex-col items-center gap-4 px-6 py-16 text-center">
-      <h1 className="text-3xl font-bold">Seite nicht gefunden</h1>
-      <Link href="/" className="btn-ghost">← Zur Übersicht</Link>
-    </div>
+    <Card>
+      <EmptyState icon={SearchX} title="Seite nicht gefunden" text="Diese Adresse gibt es im Reels-Manager nicht.">
+        <Link href="/" className="btn btn-primary">Zum Dashboard</Link>
+      </EmptyState>
+    </Card>
   )
 }

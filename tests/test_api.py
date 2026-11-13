@@ -56,6 +56,11 @@ def test_pages_and_legacy_redirects(tmp_path, monkeypatch):
     assert c.head("/posts").status_code == 200
     assert c.get("/posts/__next._tree.txt").text == "rsc"
     assert c.get("/accounts/7", follow_redirects=False).headers["location"] == "/account?id=7"
+    (web / "accounts").mkdir()
+    (web / "accounts.html").write_text("<h1>accounts</h1>")
+    (web / "accounts" / "__next._tree.txt").write_text("rsc-accounts")
+    assert c.get("/accounts").text == "<h1>accounts</h1>"
+    assert c.get("/accounts/__next._tree.txt").text == "rsc-accounts"
     assert c.get("/../app/main.py").status_code == 404
     assert c.get("/nope").status_code == 404
     assert c.get("/api/nope").json()["detail"]
@@ -91,3 +96,28 @@ def test_basic_auth(monkeypatch):
     assert c.get("/ui-api/overview", auth=("henri", "pw")).status_code == 200
     assert c.get("/health").status_code == 200
     assert c.get("/api/due", headers=H).status_code == 200
+
+
+def test_stats_system_settings(monkeypatch):
+    from app import system
+    monkeypatch.setattr(system, "_last_n8n_poll", None)
+    c = client()
+    aid = db.save_account({"name": "A"})
+    for i, status in enumerate(["published", "published", "failed", "ready"]):
+        pid = db.create_post(aid, {"id": f"s{i}", "subreddit": "aww", "title": "t", "author": "u", "permalink": "/"}, None)
+        db.update_post(pid, status=status)
+    st = c.get("/ui-api/stats?days=7").json()
+    assert st["week"] == {"published": 2, "failed": 1} and len(st["daily"]) == 7
+    assert st["daily"][-1]["published"] == 2 and sum(map(sum, st["heatmap"])) == 2
+    assert st["sources"][0] == {**st["sources"][0], "subreddit": "aww", "total": 4, "published": 2, "failed": 1}
+    assert c.get("/ui-api/stats?account_id=999").json()["by_status"] == {}
+    assert len(c.get(f"/ui-api/posts?account_id={aid}").json()["posts"]) == 4
+
+    sysinfo = c.get("/ui-api/system").json()
+    assert 0 <= sysinfo["cpu"] <= 100 and sysinfo["disk"]["total"] > 0 and sysinfo["last_n8n_poll"] is None
+    c.get("/api/due", headers=H)
+    assert c.get("/ui-api/system").json()["last_n8n_poll"]
+
+    cfg = c.get("/ui-api/settings").json()
+    assert cfg["api"]["key_set"] is True and "test-key" not in str(cfg)
+    assert c.post("/ui-api/cleanup").json() == {"removed": 0}
