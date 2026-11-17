@@ -79,6 +79,7 @@ export default function AccountPage() {
   const [showToken, setShowToken] = useState(false)
   const [businessName, setBusinessName] = useState("")
   const [metaAppId, setMetaAppId] = useState("")
+  const [metaBusinessId, setMetaBusinessId] = useState("")
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const stats = useApi<Stats>(id ? statsPath(id, 30) : null, 60_000)
@@ -93,10 +94,11 @@ export default function AccountPage() {
       return
     }
     try {
-      const d = await api<{ account: Account; sources: Source[]; posts: Post[]; instagram_setup?: { business_name: string; app_id?: string } }>(`/accounts/${id}`)
+      const d = await api<{ account: Account; sources: Source[]; posts: Post[]; instagram_setup?: { business_name: string; app_id?: string; business_id?: string } }>(`/accounts/${id}`)
       setAccount(d.account)
       setBusinessName(d.instagram_setup?.business_name ?? "")
       setMetaAppId(d.instagram_setup?.app_id ?? "")
+      setMetaBusinessId(d.instagram_setup?.business_id ?? "")
       setSources(d.sources)
       setPosts(d.posts)
       if (!keepForm) {
@@ -253,7 +255,7 @@ export default function AccountPage() {
           <button type="button" className={connected ? "btn btn-sm" : "btn btn-primary"} onClick={() => igConnect.start(account.id)}>{connected ? "Neu verbinden" : "Mit Instagram verbinden"}</button>
           {connected && <Menu items={[{ label: "Instagram trennen", danger: true, onSelect: disconnectInstagram }]} />}
         </div>
-        <ConnectChecklist accountId={account.id} business={businessName} appId={metaAppId} />
+        <ConnectChecklist accountId={account.id} business={businessName} appId={metaAppId} businessId={metaBusinessId} />
         </div>
       ) : <p className="caption">Nach dem Anlegen verbindest du den Account mit einem Klick über Instagram oder Facebook.</p>}
       <details className="group">
