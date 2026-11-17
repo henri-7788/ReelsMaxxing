@@ -65,10 +65,12 @@ Facebook-Seite ist nicht nötig, die App muss aber einem Business-Portfolio geh�
    und *URL der Anfrage zur Löschung von Daten* = `https://reels.deinedomain.de/api/instagram/data-deletion`.
 4. Im Stack setzen: `META_APP_ID` und `META_APP_SECRET` (*App-Einstellungen → Allgemeines*) und
    `META_CONFIG_ID` (aus Schritt 2).
+   Optional `META_BUSINESS_NAME` (z. B. `ReelsMaxxing`): erscheint in der Checkliste neben dem Button.
 5. Jeden Instagram-Account als **Instagram-Tester** einladen (*App-Rollen → Rollen*) und die
    Einladung auf instagram.com annehmen: Einstellungen → Website-Berechtigungen → Apps und Websites →
    Tester-Einladungen. Für eigene Accounts reicht *Standard Access*, ein App Review ist nicht nötig.
-6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Werden beim Login mehrere
+6. In der Oberfläche beim Account auf **Mit Instagram verbinden** klicken. Der Login öffnet sich in
+   einem neuen Tab, die Account-Seite wartet mit einem Lade-Overlay und aktualisiert sich danach. Werden beim Login mehrere
    Instagram-Konten freigegeben, bekommt jedes seinen Token; fehlende Accounts werden pausiert angelegt.
 
 Deauthorize und Data deletion ruft Meta direkt vom Server auf. Deshalb in Cloudflare Access

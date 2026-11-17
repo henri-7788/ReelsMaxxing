@@ -7,11 +7,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type
 import { PerformanceCard, PostingTimesCard, statsPath } from "@/components/cards"
 import { KpiCard } from "@/components/charts/KpiCard"
 import { PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
+import { ConnectChecklist, ConnectOverlay, useInstagramConnect } from "@/components/InstagramConnect"
 import { Sources } from "@/components/Sources"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, api, formatSlot, instagramConnectUrl, parseTimes, tokenDaysLeft, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
+import { accountBody, api, formatSlot, parseTimes, tokenDaysLeft, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 
 type Form = ReturnType<typeof accountBody>
@@ -76,6 +77,7 @@ export default function AccountPage() {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [showToken, setShowToken] = useState(false)
+  const [businessName, setBusinessName] = useState("")
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const stats = useApi<Stats>(id ? statsPath(id, 30) : null, 60_000)
@@ -90,8 +92,9 @@ export default function AccountPage() {
       return
     }
     try {
-      const d = await api<{ account: Account; sources: Source[]; posts: Post[] }>(`/accounts/${id}`)
+      const d = await api<{ account: Account; sources: Source[]; posts: Post[]; instagram_setup?: { business_name: string } }>(`/accounts/${id}`)
       setAccount(d.account)
+      setBusinessName(d.instagram_setup?.business_name ?? "")
       setSources(d.sources)
       setPosts(d.posts)
       if (!keepForm) {
@@ -122,6 +125,15 @@ export default function AccountPage() {
     reloadAll()
     router.replace(id ? `/account?id=${id}` : "/account", { scroll: false })
   }, [params, id, router, toast, reloadAll])
+
+  const igConnect = useInstagramConnect((r) => {
+    if (!r) toast("Anmeldung abgebrochen")
+    else if (r.ig === "connected") toast(r.message || "Instagram verbunden")
+    else toast(`Instagram-Verbindung fehlgeschlagen: ${r.message || "unbekannter Fehler"}`, "error")
+    reloadAll()
+    if (r?.ig === "connected" && r.account_id && r.account_id !== id) router.push(`/account?id=${r.account_id}`)
+    else load(true)
+  })
 
   async function disconnectInstagram() {
     if (!id) return
@@ -224,7 +236,8 @@ export default function AccountPage() {
   const instagram = (
     <Panel title="Instagram" sub="Professionelles Instagram-Konto, verbunden per Login mit Instagram oder Facebook">
       {account ? (
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="grid gap-4 md:grid-cols-2">
+        <div className="flex flex-wrap content-start items-center gap-3">
           <div className="min-w-48 flex-1">
             {connected ? (
               <>
@@ -235,8 +248,10 @@ export default function AccountPage() {
               </>
             ) : <p className="caption">Noch nicht verbunden. Reels werden vorbereitet, aber nicht gepostet.</p>}
           </div>
-          <a className={connected ? "btn btn-sm" : "btn btn-primary"} href={instagramConnectUrl(account.id)}>{connected ? "Neu verbinden" : "Mit Instagram verbinden"}</a>
+          <button type="button" className={connected ? "btn btn-sm" : "btn btn-primary"} onClick={() => igConnect.start(account.id)}>{connected ? "Neu verbinden" : "Mit Instagram verbinden"}</button>
           {connected && <Menu items={[{ label: "Instagram trennen", danger: true, onSelect: disconnectInstagram }]} />}
+        </div>
+        <ConnectChecklist accountId={account.id} business={businessName} />
         </div>
       ) : <p className="caption">Nach dem Anlegen verbindest du den Account mit einem Klick über Instagram oder Facebook.</p>}
       <details className="group">
@@ -366,6 +381,7 @@ export default function AccountPage() {
         Subreddits und Verlauf dieses Accounts werden ebenfalls gelöscht. Das lässt sich nicht rückgängig machen.
       </ConfirmDialog>
       <VideoDrawer post={drawer.post} onClose={drawer.close} />
+      {igConnect.waiting && <ConnectOverlay onReopen={igConnect.reopen} onCancel={igConnect.cancel} tabClosed={igConnect.tabClosed} />}
     </div>
   )
 }
