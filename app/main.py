@@ -332,7 +332,7 @@ def ui_account(account_id: int):
     return {"account": _public_account(acc), "sources": db.list_sources(account_id),
             "posts": db.list_posts(30, account_id),
             "instagram_setup": {"configured": instagram.configured(), "business_name": settings.meta_business_name,
-                                "app_id": settings.meta_app_id}}
+                                "app_id": settings.meta_app_id, "business_id": settings.meta_business_id}}
 
 
 def _save(body: AccountBody, account_id: int | None) -> dict:

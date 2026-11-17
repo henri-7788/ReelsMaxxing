@@ -28,6 +28,8 @@ class Settings:
     meta_config_id: str = field(default_factory=lambda: os.getenv("META_CONFIG_ID", ""))
     # Name of the business portfolio accounts should be connected with (shown in the UI checklist)
     meta_business_name: str = field(default_factory=lambda: os.getenv("META_BUSINESS_NAME", ""))
+    # ID of that portfolio (business_id=... in Meta URLs): links in the checklist open it directly
+    meta_business_id: str = field(default_factory=lambda: os.getenv("META_BUSINESS_ID", ""))
     meta_graph_version: str = field(default_factory=lambda: os.getenv("META_GRAPH_VERSION", "v27.0"))
     # libx264 (software) or vaapi (Intel GPU, needs /dev/dri)
     encoder: str = field(default_factory=lambda: os.getenv("ENCODER", "libx264"))
