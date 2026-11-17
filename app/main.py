@@ -1,5 +1,7 @@
 """Reels-Manager: web UI + API for n8n."""
 import base64
+import html
+import json
 import logging
 import secrets
 import threading
@@ -125,12 +127,36 @@ def api_result(post_id: int, body: ResultBody):
 # ----------------------------------------------------------- Instagram Login
 # These are public (no API key / basic auth): Instagram redirects the browser here, Meta calls the
 # other two server-to-server. They are protected by the signed state / signed_request instead.
-def _back_to_ui(account_id: int | None, result: str, message: str = "") -> RedirectResponse:
+def _back_to_ui(account_id: int | None, result: str, message: str = "") -> HTMLResponse:
+    """Result page in the login tab: tells the account page (BroadcastChannel / opener) and closes itself.
+
+    If it was not opened from the UI (no opener / close blocked), it falls back to a redirect.
+    """
     params = {"ig": result}
     if message:
         params["ig_message"] = message[:300]
-    path = f"/account?id={account_id}&" if account_id else "/accounts?"
-    return RedirectResponse(path + urlencode(params), status_code=303)
+    target = (f"/account?id={account_id}&" if account_id else "/accounts?") + urlencode(params)
+    payload = json.dumps({"type": "reels-instagram", "ig": result, "message": message[:300],
+                          "account_id": account_id, "target": target}).replace("<", "\\u003c")
+    title = "Instagram verbunden" if result == "connected" else "Verbindung fehlgeschlagen"
+    body = html.escape(message or ("Du kannst diesen Tab schließen." if result == "connected" else ""))
+    return HTMLResponse(f"""<!doctype html><html lang="de"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title>
+<style>body{{font:15px system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;margin:0;color:#1c1c1e}}
+@media (prefers-color-scheme:dark){{body{{background:#111214;color:#f2f2f7}}}}a{{color:#235EE8}}</style></head>
+<body><main style="text-align:center;padding:24px"><h1 style="font-size:20px">{title}</h1><p>{body}</p>
+<p><a href="{html.escape(target)}">Zurück zum Reels-Manager</a></p></main>
+<script>
+const r = {payload};
+let told = false;
+try {{ const bc = new BroadcastChannel("reels-instagram"); bc.postMessage(r); bc.close(); told = true; }} catch (e) {{}}
+try {{ if (window.opener && !window.opener.closed) {{ window.opener.postMessage(r, location.origin); told = true; }} }} catch (e) {{}}
+// Login ran in this same tab (popup blocked): go back to the UI the classic way.
+// Otherwise the account page got the result: close, or stay on this page if the browser refuses.
+let sameTab = false;
+try {{ sameTab = sessionStorage.getItem("ig-same-tab") === "1"; sessionStorage.removeItem("ig-same-tab"); }} catch (e) {{}}
+if (sameTab || !told) location.replace(r.target); else window.close();
+</script></body></html>""", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/instagram/callback")
@@ -304,7 +330,8 @@ def ui_cleanup():
 def ui_account(account_id: int):
     acc = _account_or_404(account_id)
     return {"account": _public_account(acc), "sources": db.list_sources(account_id),
-            "posts": db.list_posts(30, account_id)}
+            "posts": db.list_posts(30, account_id),
+            "instagram_setup": {"configured": instagram.configured(), "business_name": settings.meta_business_name}}
 
 
 def _save(body: AccountBody, account_id: int | None) -> dict:

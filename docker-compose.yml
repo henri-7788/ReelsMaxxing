@@ -20,6 +20,7 @@ services:
       META_APP_ID: ${META_APP_ID:-}
       META_APP_SECRET: ${META_APP_SECRET:-}
       META_CONFIG_ID: ${META_CONFIG_ID:-}
+      META_BUSINESS_NAME: ${META_BUSINESS_NAME:-}
       ENCODER: ${ENCODER:-libx264}
       TZ: Europe/Berlin
     volumes:

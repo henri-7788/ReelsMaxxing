@@ -87,12 +87,13 @@ def test_callback_route(monkeypatch):
     monkeypatch.setattr(instagram, "connect", lambda a, code: seen.update(a=a, code=code) or [a])
     c = TestClient(app)
     r = c.get("/api/instagram/callback", params={"code": "abc", "state": instagram.make_state(aid)}, follow_redirects=False)
-    assert r.status_code == 303 and r.headers["location"] == f"/account?id={aid}&ig=connected"
+    assert r.status_code == 200 and "BroadcastChannel" in r.text
+    assert f'"target": "/account?id={aid}&ig=connected"' in r.text and '"ig": "connected"' in r.text
     assert seen == {"a": aid, "code": "abc"}
     assert c.get("/api/instagram/callback", params={"code": "abc", "state": "x.y"}).status_code == 400
-    r = c.get("/api/instagram/callback", params={"error": "access_denied", "state": instagram.make_state(aid)},
-              follow_redirects=False)
-    assert "ig=error" in r.headers["location"]
+    r = c.get("/api/instagram/callback", params={"error": "access_denied", "error_description": "<b>nein</b>",
+                                                  "state": instagram.make_state(aid)})
+    assert "ig=error" in r.text and "<b>nein</b>" not in r.text  # escaped in HTML and JSON
 
 
 def test_connect_redirect():
