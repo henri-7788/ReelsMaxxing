@@ -92,11 +92,13 @@ export function ConnectOverlay({ onReopen, onCancel, tabClosed }: { onReopen: ()
 
 type Step = { id: string; title: string; body: ReactNode }
 
-function steps(business: string): { prepare: Step[]; login: Step[] } {
+function steps(business: string, appId: string): { prepare: Step[]; login: Step[] } {
+  const rolesUrl = appId ? `https://developers.facebook.com/apps/${appId}/roles/roles/` : "https://developers.facebook.com/apps/"
   const portfolio = business ? <b>„{business}“</b> : "deinem Business-Portfolio"
   return {
     prepare: [
       { id: "pro", title: "Professionelles Konto", body: <>Das Instagram-Konto ist ein <b>Business- oder Creator-Konto</b> (Instagram-App → Einstellungen → Kontoart und Tools).</> },
+      { id: "whitelist", title: "Im Meta-Dashboard als Tester eintragen", body: <>Unter <a className="link" href={rolesUrl} target="_blank" rel="noopener noreferrer">App-Rollen → Rollen</a> → <b>Personen hinzufügen</b> → <b>Instagram-Tester</b> den Instagram-Namen eintragen. Erst danach taucht die Einladung im Instagram-Konto auf.</> },
       { id: "tester", title: "Tester-Einladung angenommen", body: <>Auf <a className="link" href="https://www.instagram.com/accounts/manage_access/" target="_blank" rel="noopener noreferrer">instagram.com → Apps und Websites</a> unter <b>Tester-Einladungen</b> annehmen. Nötig, solange die Meta-App im Entwicklungsmodus ist.</> },
       { id: "portfolio", title: "Konto im richtigen Portfolio", body: <>In der <a className="link" href="https://business.facebook.com/latest/settings/instagram_account_v2" target="_blank" rel="noopener noreferrer">Business-Verwaltung</a> liegt das Instagram-Konto in {portfolio} (Konten → Instagram-Konten → Hinzufügen).</> },
     ],
@@ -108,7 +110,7 @@ function steps(business: string): { prepare: Step[]; login: Step[] } {
 }
 
 /** Tickable preparation list next to the connect button; ticks are remembered per account in this browser. */
-export function ConnectChecklist({ accountId, business }: { accountId: number; business: string }) {
+export function ConnectChecklist({ accountId, business, appId = "" }: { accountId: number; business: string; appId?: string }) {
   const key = `ig-checklist-${accountId}`
   const [done, setDone] = useState<Record<string, boolean>>({})
   useEffect(() => {
@@ -119,7 +121,7 @@ export function ConnectChecklist({ accountId, business }: { accountId: number; b
     try { localStorage.setItem(key, JSON.stringify(next)) } catch { /* private mode */ }
     return next
   })
-  const { prepare, login } = steps(business)
+  const { prepare, login } = steps(business, appId)
   const group = (title: string, list: Step[], offset: number) => (
     <div className="flex flex-col gap-2">
       <p className="text-[12px] font-semibold uppercase tracking-wide text-ink-3">{title}</p>
