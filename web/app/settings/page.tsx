@@ -4,9 +4,11 @@ import { Moon, Sun } from "lucide-react"
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import type { ReactNode } from "react"
+import { ReelPreview } from "@/components/ReelEditor"
 import { Card, CardHeader, ErrorState, Segmented, SkeletonRows, TonePill } from "@/components/ui/kit"
 import { relTime, type SettingsInfo } from "@/lib/api"
 import { useApi, useData, type Theme } from "@/lib/data"
+import { DEFAULT_STYLE } from "@/lib/overlay"
 
 type Tab = "access" | "render" | "automation" | "system" | "look"
 const TABS: { value: Tab; label: string }[] = [
@@ -89,20 +91,26 @@ export default function SettingsPage() {
               <CardHeader title="Standard-Preset" sub="So wird jedes Video für Instagram aufbereitet" />
               <Row label="Format">{cfg.render.width} × {cfg.render.height} px (9:16), H.264/AAC</Row>
               <Row label="Zuschnitt">Original mittig auf unscharfem Hintergrund</Row>
-              <Row label="Hook-Text oben" hint="pro Account schaltbar">Titel des Reddit-Posts</Row>
-              <Row label="Quellenangabe unten" hint="immer an">Video: u/autor · r/subreddit</Row>
-              <Row label="Lautstärke">{cfg.render.loudness_lufs} LUFS</Row>
+              <Row label="Hook-Text oben" hint="pro Account schaltbar">Titel des Reddit-Posts, nach {DEFAULT_STYLE.hook_max_lines} Zeilen mit „…“ gekürzt</Row>
+              <Row label="Quellenangabe" hint="immer an">Video: u/autor · r/subreddit, klein unten links</Row>
+              <Row label="Ton">Reddit-Tonspur, auf {cfg.render.loudness_lufs} LUFS angeglichen. Stumme Quellen werden markiert.</Row>
               <Row label="Reihenfolge">Ein Video nach dem anderen, damit der Mini-PC nicht überlastet</Row>
             </Card>
             <Card className="col-span-12 xl:col-span-5">
-              <CardHeader title="Vorschau" sub="Aufbau eines fertigen Reels" />
-              <div className="mx-auto flex aspect-[9/16] w-44 flex-col justify-between overflow-hidden rounded-[16px] border border-line bg-surface-2 p-3 text-center" aria-label="Schema: Hook-Text oben, Video in der Mitte, Quellenangabe unten">
-                <span className="rounded-[6px] bg-surface px-2 py-1 text-[11px] font-semibold text-ink">Hook-Text</span>
-                <span className="flex aspect-video items-center justify-center rounded-[6px] bg-primary-200 text-[11px] font-medium text-ink">Original-Video</span>
-                <span className="text-[10px] text-ink-3">Video: u/autor · r/subreddit</span>
-              </div>
+              <CardHeader title="Vorschau" sub="Standard-Einstellungen" />
+              <ReelPreview style={DEFAULT_STYLE} width={216} />
             </Card>
-            <p className="caption col-span-12">Eigene Presets (Zoom, Varianten, Schriftgröße) gibt es noch nicht, die Werte sind fest im Renderer hinterlegt.</p>
+            <Card className="col-span-12">
+              <CardHeader title="Eigene Presets pro Account" sub="Schriftgröße, Position und Zeilen mit Live-Vorschau einstellen und als Preset speichern" />
+              {accounts.length === 0 ? <p className="text-ink-3">Noch keine Accounts.</p> : accounts.map((a) => (
+                <Row key={a.id} label={a.name}>
+                  <span className="flex items-center gap-3 sm:justify-end">
+                    <span className="caption">{a.preset_id ? "eigenes Preset aktiv" : "Standard"}</span>
+                    <Link href={`/account?id=${a.id}&tab=editor`} className="btn btn-sm">Editor öffnen</Link>
+                  </span>
+                </Row>
+              ))}
+            </Card>
           </div>
         )}
 

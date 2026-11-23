@@ -1,6 +1,5 @@
 """Caption and hook text helpers."""
 import re
-import textwrap
 
 INSTAGRAM_CAPTION_LIMIT = 2200
 
@@ -28,9 +27,35 @@ def clean_title(title: str) -> str:
     return title
 
 
+def wrap_words(text: str, width: int) -> list[str]:
+    """Greedy word wrap; words longer than a line are split. Mirrored in web/lib/overlay.ts (wrapWords)."""
+    lines: list[str] = []
+    cur = ""
+    for word in text.split():
+        while len(word) > width:
+            if cur:
+                lines.append(cur)
+                cur = ""
+            lines.append(word[:width])
+            word = word[width:]
+        if not word:
+            continue
+        if not cur:
+            cur = word
+        elif len(cur) + 1 + len(word) <= width:
+            cur += " " + word
+        else:
+            lines.append(cur)
+            cur = word
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def hook_lines(title: str, width: int = 24, max_lines: int = 3) -> str:
+    """Hook text for the top of the reel. Too long titles are cut after max_lines with an ellipsis."""
     title = clean_title(title)
-    lines = textwrap.wrap(title, width=width)
+    lines = wrap_words(title, width)
     if len(lines) > max_lines:
         lines = lines[:max_lines]
         lines[-1] = lines[-1].rstrip(".,;:!? ") + "…"

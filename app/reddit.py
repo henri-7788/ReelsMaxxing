@@ -1,12 +1,16 @@
 """Reddit API access (app-only OAuth) and video download."""
+import logging
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
+from urllib.parse import urljoin
 
 import httpx
 
 from . import db
 from .config import settings
 
+log = logging.getLogger(__name__)
 _token: dict = {"value": None, "expires": 0.0}
 
 
@@ -110,20 +114,60 @@ def pick_candidate(sources: list[dict]) -> dict | None:
     }
 
 
-def _audio_urls(fallback_url: str) -> list[str]:
-    base = fallback_url.split("?")[0].rsplit("/", 1)[0]
-    return [f"{base}/{name}" for name in
-            ("DASH_AUDIO_128.mp4", "DASH_AUDIO_64.mp4", "DASH_audio.mp4", "audio")]
+def _base_url(video: dict) -> str:
+    return video["fallback_url"].split("?")[0].rsplit("/", 1)[0] + "/"
+
+
+def parse_dash_audio(manifest: str, base: str) -> list[str]:
+    """Audio file URLs from a Reddit DASH manifest, best bitrate first."""
+    try:
+        root = ET.fromstring(manifest)
+    except ET.ParseError:
+        return []
+    found: list[tuple[int, str]] = []
+    for aset in root.iter():
+        if not aset.tag.endswith("AdaptationSet"):
+            continue
+        kind = (aset.get("contentType") or "") + (aset.get("mimeType") or "")
+        for rep in aset:
+            if not rep.tag.endswith("Representation"):
+                continue
+            if "audio" not in kind + (rep.get("mimeType") or ""):
+                continue
+            url = next((el.text for el in rep.iter() if el.tag.endswith("BaseURL") and el.text), None)
+            if url:
+                found.append((int(rep.get("bandwidth") or 0), urljoin(base, url.strip())))
+    return [u for _, u in sorted(found, key=lambda x: -x[0])]
+
+
+def _audio_urls(video: dict, client: httpx.Client) -> list[str]:
+    """Candidate URLs for the separate audio track. Reddit serves video and audio separately;
+    newer uploads use CMAF_AUDIO_*.mp4, older ones DASH_AUDIO_*.mp4 / DASH_audio.mp4 / audio."""
+    base = _base_url(video)
+    urls: list[str] = []
+    manifest_url = video.get("dash_url") or base + "DASHPlaylist.mpd"
+    try:
+        r = client.get(manifest_url)
+        if r.status_code == 200:
+            urls += parse_dash_audio(r.text, base)
+    except httpx.HTTPError as e:
+        log.info("DASH-Manifest nicht geladen (%s), probiere bekannte Dateinamen", e)
+    for name in ("CMAF_AUDIO_128.mp4", "CMAF_AUDIO_64.mp4", "DASH_AUDIO_128.mp4", "DASH_AUDIO_64.mp4",
+                 "DASH_audio.mp4", "audio"):
+        if base + name not in urls:
+            urls.append(base + name)
+    return urls
 
 
 def download(video: dict, target_dir: Path) -> tuple[Path, Path | None]:
+    """Download video and (if Reddit has one) the separate audio track. Audio None = none found."""
     target_dir.mkdir(parents=True, exist_ok=True)
     vpath, apath = target_dir / "video.mp4", target_dir / "audio.mp4"
     with httpx.Client(timeout=120, follow_redirects=True, headers=_headers()) as client:
         _stream(client, video["fallback_url"], vpath)
-        if video.get("is_gif"):
+        if video.get("is_gif") or video.get("has_audio") is False:
             return vpath, None
-        for url in _audio_urls(video["fallback_url"]):
+        for url in _audio_urls(video, client):
             try:
                 _stream(client, url, apath)
                 if apath.stat().st_size > 1024:
