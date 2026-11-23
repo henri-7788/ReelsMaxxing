@@ -4,6 +4,7 @@ import threading
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
+from . import events
 from .config import settings
 
 SCHEMA = """
@@ -179,6 +180,7 @@ def save_account(data: dict, account_id: int | None = None) -> int:
 
 def delete_account(account_id: int) -> None:
     execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+    events.posts_changed()
 
 
 # --- presets --------------------------------------------------------------
@@ -240,17 +242,20 @@ def reddit_id_known(reddit_id: str) -> bool:
 
 def create_post(account_id: int, item: dict, slot: str | None) -> int:
     ts = now_iso()
-    return execute(
+    post_id = execute(
         "INSERT INTO posts (account_id, reddit_id, subreddit, title, author, permalink, status, slot, created_at, updated_at)"
         " VALUES (?, ?, ?, ?, ?, ?, 'rendering', ?, ?, ?)",
         (account_id, item["id"], item["subreddit"], item["title"], item["author"], item["permalink"], slot, ts, ts),
     )
+    events.posts_changed()
+    return post_id
 
 
 def update_post(post_id: int, **fields) -> None:
     fields["updated_at"] = now_iso()
     sets = ", ".join(f"{k} = ?" for k in fields)
     execute(f"UPDATE posts SET {sets} WHERE id = ?", [*fields.values(), post_id])
+    events.posts_changed()
 
 
 def get_post(post_id: int) -> dict | None:

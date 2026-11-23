@@ -1,7 +1,7 @@
 "use client"
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
-import { api, type Account, type Overview, type Post, type SystemInfo } from "./api"
+import { api, type Account, type Overview, type Post, type RenderProgress, type SystemInfo } from "./api"
 
 /** Fetch with polling that pauses while the tab is hidden (UIDesign.md section 12). */
 export function useApi<T>(path: string | null, intervalMs = 0) {
@@ -59,6 +59,64 @@ export function useApi<T>(path: string | null, intervalMs = 0) {
   return { data, error, loading, reload }
 }
 
+/**
+ * Server-Sent Events from /ui-api/events: calls onPosts when any post changed and keeps the
+ * render progress per post id. EventSource reconnects on its own; while the tab is hidden the
+ * stream is closed and reopened (with a catch-up reload) when it becomes visible again.
+ */
+export function useLiveEvents(onPosts: () => void) {
+  const [progress, setProgress] = useState<Record<number, RenderProgress>>({})
+  const [live, setLive] = useState(false)
+  const cb = useRef(onPosts)
+  useEffect(() => {
+    cb.current = onPosts
+  }, [onPosts])
+
+  useEffect(() => {
+    if (typeof EventSource === "undefined") return
+    let es: EventSource | null = null
+    let debounce: ReturnType<typeof setTimeout> | undefined
+    let first = true
+    const open = () => {
+      if (es) return
+      es = new EventSource("/ui-api/events")
+      es.onopen = () => setLive(true)
+      es.onerror = () => setLive(false)
+      es.addEventListener("hello", () => {
+        // after a reconnect we may have missed changes
+        if (!first) cb.current()
+        first = false
+      })
+      es.addEventListener("posts", () => {
+        clearTimeout(debounce)
+        debounce = setTimeout(() => cb.current(), 250)
+      })
+      es.addEventListener("progress", (e) => {
+        try {
+          setProgress(JSON.parse((e as MessageEvent).data))
+        } catch {
+          /* ignore malformed frame */
+        }
+      })
+    }
+    const close = () => {
+      es?.close()
+      es = null
+      setLive(false)
+    }
+    const onVis = () => (document.visibilityState === "visible" ? open() : close())
+    if (document.visibilityState === "visible") open()
+    document.addEventListener("visibilitychange", onVis)
+    return () => {
+      clearTimeout(debounce)
+      document.removeEventListener("visibilitychange", onVis)
+      close()
+    }
+  }, [])
+
+  return { progress, live }
+}
+
 export type Theme = "light" | "dark"
 
 type Ctx = {
@@ -69,6 +127,10 @@ type Ctx = {
   /** Posts filtered by the account switcher */
   posts: Post[]
   system: SystemInfo | null
+  /** Render progress per post id, pushed live by the server */
+  progress: Record<number, RenderProgress>
+  /** true while the live connection to the server is open */
+  live: boolean
   loading: boolean
   error: string | null
   reload: () => void
@@ -145,9 +207,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     reloadOv()
     reloadPs()
   }, [reloadOv, reloadPs])
+  const { progress, live } = useLiveEvents(reload)
 
   const value: Ctx = {
-    overview: ov.data, accounts, allPosts, posts, system: sys.data,
+    overview: ov.data, accounts, allPosts, posts, system: sys.data, progress, live,
     loading: ov.loading || ps.loading, error: ov.error ?? ps.error, reload,
     accountId: effectiveId, account, setAccountId, theme, themeChoice, setTheme,
   }

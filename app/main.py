@@ -1,4 +1,5 @@
 """Reels-Manager: web UI + API for n8n."""
+import asyncio
 import base64
 import html
 import json
@@ -11,11 +12,11 @@ from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, instagram, pipeline, presets, reddit, scheduler, stats, system
+from . import db, events, instagram, pipeline, presets, reddit, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -265,6 +266,42 @@ def ui_overview():
         a["sources"] = db.list_sources(a["id"])
     return {"accounts": accounts, "posts": db.list_posts(15), "due": scheduler.due_accounts(),
             "stats": db.post_stats()}
+
+
+EVENT_TICK = 0.5  # seconds between checks of the change feed
+EVENT_KEEPALIVE = 15.0  # comment line so proxies and the browser keep the stream open
+
+
+def _sse(event: str, data) -> str:
+    return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
+
+
+async def _event_stream(request: Request):
+    """Push post changes and render progress to the browser (Server-Sent Events)."""
+    yield "retry: 3000\n\n"
+    version, progress = events.version(), events.progress()
+    yield _sse("hello", {"version": version})
+    yield _sse("progress", progress)
+    idle = 0.0
+    while not await request.is_disconnected():
+        await asyncio.sleep(EVENT_TICK)
+        idle += EVENT_TICK
+        v, p = events.version(), events.progress()
+        if v != version:
+            version, idle = v, 0.0
+            yield _sse("posts", {"version": v})
+        if p != progress:
+            progress, idle = p, 0.0
+            yield _sse("progress", p)
+        if idle >= EVENT_KEEPALIVE:
+            idle = 0.0
+            yield ": ping\n\n"
+
+
+@ui.get("/events")
+async def ui_events(request: Request):
+    return StreamingResponse(_event_stream(request), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @ui.get("/posts")

@@ -231,6 +231,14 @@ select.field {
 .badge.danger { background: var(--danger); }
 .tag { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 8px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); font-size: 12px; font-weight: 500; color: var(--text-2); white-space: nowrap; }
 
+/* Render progress (live from ffmpeg) */
+.render-bar { position: relative; height: 6px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--warning) 16%, var(--surface-2)); }
+.render-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background: var(--warning); transition: width 400ms ease-out; }
+.render-bar.indeterminate > span { width: 35%; animation: render-slide 1.3s ease-in-out infinite; }
+@keyframes render-slide { from { left: -35%; } to { left: 100%; } }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent); }
+.live-dot.off { background: var(--text-3); box-shadow: none; }
+
 /* Table */
 .data-table { width: 100%; border-collapse: collapse; }
 .data-table th { text-align: left; height: 40px; padding: 0 16px; background: var(--surface-2); font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); white-space: nowrap; }

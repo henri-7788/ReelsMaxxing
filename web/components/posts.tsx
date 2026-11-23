@@ -4,6 +4,7 @@ import { ExternalLink, ListVideo, Play, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { AccountDot, EmptyState, StatusPill, TonePill } from "@/components/ui/kit"
 import { displayStatus, fmtDateTime, formatSlot, type Post } from "@/lib/api"
+import { useData } from "@/lib/data"
 
 export function canView(p: Post) {
   return !!p.media_file && ["ready", "preview", "publishing", "failed"].includes(p.status)
@@ -17,6 +18,36 @@ function Thumb({ p, large = false }: { p: Post; large?: boolean }) {
   )
 }
 
+const STAGE_LABEL = { download: "Lädt von Reddit", waiting: "Wartet auf ffmpeg", render: "Rendert" } as const
+
+/** Live progress of a post that is rendering right now (pushed via /ui-api/events). */
+export function RenderProgressBar({ p, className = "" }: { p: Post; className?: string }) {
+  const { progress } = useData()
+  if (p.status !== "rendering") return null
+  const pr = progress[p.id]
+  if (!pr) return null
+  const pct = pr.stage === "render" ? pr.percent : null
+  const label = STAGE_LABEL[pr.stage] ?? "Rendert"
+  return (
+    <span className={`flex w-full flex-col gap-1 ${className}`}>
+      <span className="caption flex items-center justify-between gap-2">
+        <span>{label}</span>
+        {pct !== null && <b className="tabular text-ink">{Math.floor(pct)} %</b>}
+      </span>
+      <span
+        className={`render-bar ${pct === null ? "indeterminate" : ""}`}
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={pct === null ? undefined : Math.floor(pct)}
+      >
+        <span style={pct === null ? undefined : { width: `${pct}%` }} />
+      </span>
+    </span>
+  )
+}
+
 /** Card for one video in the pipeline and in mobile lists (UIDesign.md 6.7). */
 export function VideoCard({ p, onOpen, showAccount = true }: { p: Post; onOpen: (p: Post) => void; showAccount?: boolean }) {
   return (
@@ -26,6 +57,7 @@ export function VideoCard({ p, onOpen, showAccount = true }: { p: Post; onOpen: 
         <span className="line-clamp-2 font-medium text-ink">{p.title}</span>
         <span className="caption truncate">r/{p.subreddit} · u/{p.author}</span>
         {p.error && <span className="line-clamp-2 text-xs text-danger">{p.error}</span>}
+        <RenderProgressBar p={p} className="pt-1" />
         <span className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 pt-1">
           <StatusPill post={p} />
           {!!p.muted && <TonePill tone="warning">stumm</TonePill>}
@@ -104,7 +136,10 @@ export function PostTable({ posts, onOpen, showAccount = true, empty = "Noch kei
                 {showAccount && <td><span className="flex items-center gap-2 whitespace-nowrap font-medium text-ink"><AccountDot id={p.account_id} /> {p.account_name}</span></td>}
                 <td className="whitespace-nowrap">{formatSlot(p.slot)}</td>
                 <td className="whitespace-nowrap text-ink-3">{fmtDateTime(p.updated_at)}</td>
-                <td><span className="flex flex-wrap gap-1"><StatusPill post={p} />{!!p.muted && <TonePill tone="warning">stumm</TonePill>}</span></td>
+                <td>
+                  <span className="flex flex-wrap gap-1"><StatusPill post={p} />{!!p.muted && <TonePill tone="warning">stumm</TonePill>}</span>
+                  <RenderProgressBar p={p} className="mt-2 min-w-[140px]" />
+                </td>
                 <td className="text-right">
                   <button type="button" className="btn btn-sm" onClick={() => onOpen(p)}>{canView(p) ? <><Play size={14} /> Ansehen</> : "Details"}</button>
                 </td>
@@ -121,9 +156,13 @@ export function PostTable({ posts, onOpen, showAccount = true, empty = "Noch kei
 }
 
 /** Right drawer on desktop, full-screen sheet on phones (UIDesign.md 6.16). */
-export function VideoDrawer({ post, onClose }: { post: Post | null; onClose: () => void }) {
+export function VideoDrawer({ post: opened, onClose }: { post: Post | null; onClose: () => void }) {
+  const { allPosts } = useData()
+  // follow live updates of the opened post (status, error, media file)
+  const post = opened ? allPosts.find((x) => x.id === opened.id) ?? opened : null
+  const isOpen = !!post
   useEffect(() => {
-    if (!post) return
+    if (!isOpen) return
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose()
     document.addEventListener("keydown", onKey)
     document.body.style.overflow = "hidden"
@@ -131,7 +170,7 @@ export function VideoDrawer({ post, onClose }: { post: Post | null; onClose: () 
       document.removeEventListener("keydown", onKey)
       document.body.style.overflow = ""
     }
-  }, [post, onClose])
+  }, [isOpen, onClose])
   if (!post) return null
   const caption = post.caption ?? ""
   const tags = (caption.match(/#[\p{L}\p{N}_]+/gu) ?? []).length
@@ -161,6 +200,7 @@ export function VideoDrawer({ post, onClose }: { post: Post | null; onClose: () 
               <span className="caption">{post.status === "published" ? "Nach dem Posten wird die Datei gelöscht." : post.status === "rendering" ? "Wird gerade gerendert." : "Keine Videodatei vorhanden."}</span>
             </div>
           )}
+          <RenderProgressBar p={post} />
           <h2 className="card-title">{post.title}</h2>
           {post.error && <p role="alert" className="rounded-[10px] border border-danger bg-danger-bg px-3 py-2 text-ink">{post.error}</p>}
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2">

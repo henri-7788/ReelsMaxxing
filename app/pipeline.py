@@ -5,7 +5,7 @@ import shutil
 import time
 from pathlib import Path
 
-from . import db, instagram, presets, reddit, render
+from . import db, events, instagram, presets, reddit, render
 from .captions import build_caption, hook_lines
 from .config import settings
 
@@ -57,6 +57,7 @@ def _build(account: dict, item: dict, slot: str | None) -> tuple[int, str, str, 
     """Download and render one Reddit video. Returns (post id, media file, caption, muted)."""
     post_id = db.create_post(account["id"], item, slot)
     work = settings.work_dir / f"post-{post_id}"
+    events.set_progress(post_id, "download")
     try:
         video, audio = reddit.download(item["video"], work)
         audio, muted = resolve_audio(item["video"], video, audio)
@@ -67,13 +68,15 @@ def _build(account: dict, item: dict, slot: str | None) -> tuple[int, str, str, 
         hook = (hook_lines(item["title"], style["hook_chars_per_line"], style["hook_max_lines"])
                 if account["hook_enabled"] and style["hook_enabled"] else None)
         credit = f"Video: u/{item['author']} · r/{item['subreddit']}"
-        render.render(video, audio, settings.media_dir / media_file, hook, credit, work, style=style)
+        render.render(video, audio, settings.media_dir / media_file, hook, credit, work, style=style,
+                      on_progress=lambda stage, pct: events.set_progress(post_id, stage, pct))
         caption = build_caption(account["caption_template"], item, account["hashtags"])
         db.update_post(post_id, status="ready", media_file=media_file, caption=caption, muted=int(muted))
     except Exception as e:
         db.update_post(post_id, status="failed", error=str(e)[:1000])
         raise
     finally:
+        events.clear_progress(post_id)
         shutil.rmtree(work, ignore_errors=True)
     return post_id, media_file, caption, muted
 
