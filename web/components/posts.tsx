@@ -18,12 +18,12 @@ function Thumb({ p, large = false }: { p: Post; large?: boolean }) {
   )
 }
 
-const STAGE_LABEL = { download: "Lädt von Reddit", waiting: "Wartet auf ffmpeg", render: "Rendert" } as const
+const STAGE_LABEL = { download: "Lädt von Reddit", waiting: "Wartet auf ffmpeg", render: "Rendert", upload: "Instagram verarbeitet das Video" } as const
 
 /** Live progress of a post that is rendering right now (pushed via /ui-api/events). */
 export function RenderProgressBar({ p, className = "" }: { p: Post; className?: string }) {
   const { progress } = useData()
-  if (p.status !== "rendering") return null
+  if (p.status !== "rendering" && p.status !== "publishing") return null
   const pr = progress[p.id]
   if (!pr) return null
   const pct = pr.stage === "render" ? pr.percent : null

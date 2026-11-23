@@ -52,7 +52,7 @@ export type Post = {
 
 /** Live render state of a post while its status is "rendering" (from /ui-api/events) */
 export type RenderProgress = {
-  stage: "download" | "waiting" | "render"
+  stage: "download" | "waiting" | "render" | "upload"
   /** 0–100, null while unknown (e.g. duration could not be read) */
   percent: number | null
 }

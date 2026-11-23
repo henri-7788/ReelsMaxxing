@@ -47,6 +47,20 @@ Fehler → n8n-Error-Workflow → E-Mail
 6. **GPU-Encoding (optional)**: `ENCODER=vaapi` setzen und im Compose `devices: /dev/dri`
    einkommentieren. Klappt es nicht, wird automatisch auf CPU (libx264) zurückgefallen.
 
+## Manuell starten
+
+Auf der Account-Seite startet **Start** (links neben „Vorschau rendern“) den Workflow sofort,
+unabhängig vom Zeitplan:
+
+* **Komplett durchlaufen**: Reddit-Video holen, rendern und direkt auf Instagram posten.
+* **Fertiges Video posten**: das neueste gerenderte Video (z. B. eine Vorschau oder ein fehlgeschlagener
+  Post, dessen Datei noch da ist) ohne neues Rendern posten.
+
+Das Posten macht hier der Container selbst über die Graph API (Container anlegen, Verarbeitung
+abwarten, veröffentlichen), n8n ist dafür nicht nötig. Der Fortschritt erscheint live in der
+Warteschlange, die geplanten Slots bleiben unverändert. Pro Account läuft höchstens ein
+manueller Durchlauf gleichzeitig.
+
 ## Instagram-Accounts verbinden (Unified Login)
 
 Neue Meta-Apps bieten nur noch die **Instagram API mit Unified Login** an (Facebook Login for

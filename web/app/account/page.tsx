@@ -10,6 +10,7 @@ import { PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
 import { ConnectChecklist, ConnectOverlay, useInstagramConnect } from "@/components/InstagramConnect"
 import { PresetEditor } from "@/components/ReelEditor"
 import { Sources } from "@/components/Sources"
+import { StartRun } from "@/components/StartRun"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
@@ -195,6 +196,8 @@ export default function AccountPage() {
     }
   }
 
+  const reloadAfterRun = useCallback(() => { load(true); reloadAll() }, [load, reloadAll])
+
   async function preview() {
     if (!id) return
     try {
@@ -339,6 +342,7 @@ export default function AccountPage() {
             {account.active && <span className="caption">Nächster Slot: {formatSlot(account.next_slot)}</span>}
           </div>
         </div>
+        <StartRun account={account} hasSources={sources.length > 0} onChange={reloadAfterRun} />
         <button type="button" className="btn" onClick={preview} disabled={!sources.length} title={sources.length ? undefined : "Erst Subreddits hinzufügen"}><Play size={16} /> Vorschau rendern</button>
         <Menu items={[{ label: "Account löschen", danger: true, onSelect: () => setConfirmDelete(true) }]} />
       </header>
