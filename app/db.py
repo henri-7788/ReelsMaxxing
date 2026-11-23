@@ -50,16 +50,28 @@ CREATE TABLE IF NOT EXISTS posts (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    settings TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 CREATE UNIQUE INDEX IF NOT EXISTS posts_reddit_unique ON posts(reddit_id);
 CREATE INDEX IF NOT EXISTS posts_account_slot ON posts(account_id, slot);
 """
 
 # Columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them to old databases)
 MIGRATIONS = (
-    ("ig_username", "TEXT NOT NULL DEFAULT ''"),
-    ("token_expires_at", "TEXT NOT NULL DEFAULT ''"),
-    ("token_refreshed_at", "TEXT NOT NULL DEFAULT ''"),
-    ("client_business_id", "TEXT NOT NULL DEFAULT ''"),
+    ("accounts", "ig_username", "TEXT NOT NULL DEFAULT ''"),
+    ("accounts", "token_expires_at", "TEXT NOT NULL DEFAULT ''"),
+    ("accounts", "token_refreshed_at", "TEXT NOT NULL DEFAULT ''"),
+    ("accounts", "client_business_id", "TEXT NOT NULL DEFAULT ''"),
+    # Preset used for renders of this account (NULL = default style)
+    ("accounts", "preset_id", "INTEGER"),
+    # 1 = the Reddit source has no sound (has_audio false or a silent track)
+    ("posts", "muted", "INTEGER NOT NULL DEFAULT 0"),
 )
 
 _lock = threading.Lock()
@@ -98,10 +110,10 @@ def init_db() -> None:
         d.mkdir(parents=True, exist_ok=True)
     with tx() as c:
         c.executescript(SCHEMA)
-        have = {r[1] for r in c.execute("PRAGMA table_info(accounts)")}
-        for col, ddl in MIGRATIONS:
+        for table, col, ddl in MIGRATIONS:
+            have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
             if col not in have:
-                c.execute(f"ALTER TABLE accounts ADD COLUMN {col} {ddl}")
+                c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
 
 
 def rows(sql: str, params=()) -> list[dict]:
@@ -123,7 +135,7 @@ def execute(sql: str, params=()) -> int:
 # --- accounts -------------------------------------------------------------
 ACCOUNT_FIELDS = ("name", "ig_user_id", "access_token", "active", "posting_times",
                   "caption_template", "hashtags", "hook_enabled", "ig_username", "token_expires_at",
-                  "token_refreshed_at", "client_business_id")
+                  "token_refreshed_at", "client_business_id", "preset_id")
 
 
 def get_account(account_id: int) -> dict | None:
@@ -148,6 +160,32 @@ def save_account(data: dict, account_id: int | None = None) -> int:
 
 def delete_account(account_id: int) -> None:
     execute("DELETE FROM accounts WHERE id = ?", (account_id,))
+
+
+# --- presets --------------------------------------------------------------
+def list_presets(account_id: int) -> list[dict]:
+    return rows("SELECT * FROM presets WHERE account_id = ? ORDER BY name COLLATE NOCASE", (account_id,))
+
+
+def get_preset(preset_id: int) -> dict | None:
+    return row("SELECT * FROM presets WHERE id = ?", (preset_id,))
+
+
+def create_preset(account_id: int, name: str, settings_json: str) -> int:
+    ts = now_iso()
+    return execute("INSERT INTO presets (account_id, name, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                   (account_id, name, settings_json, ts, ts))
+
+
+def update_preset(preset_id: int, name: str, settings_json: str) -> None:
+    execute("UPDATE presets SET name = ?, settings = ?, updated_at = ? WHERE id = ?",
+            (name, settings_json, now_iso(), preset_id))
+
+
+def delete_preset(preset_id: int) -> None:
+    with tx() as c:
+        c.execute("UPDATE accounts SET preset_id = NULL WHERE preset_id = ?", (preset_id,))
+        c.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
 
 
 # --- sources --------------------------------------------------------------

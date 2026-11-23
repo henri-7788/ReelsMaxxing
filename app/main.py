@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, instagram, pipeline, scheduler, stats, system
+from . import db, instagram, pipeline, presets, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -312,13 +312,22 @@ def ui_settings():
                 "last_n8n_poll": system.snapshot()["last_n8n_poll"]},
         "ui_auth": bool(settings.ui_user),
         "render": {"encoder": settings.encoder, "x264_preset": settings.x264_preset, "width": 1080, "height": 1920,
-                   "loudness_lufs": -14},
+                   "loudness_lufs": -14, "preset_defaults": presets.DEFAULTS},
         "automation": {"slot_window_minutes": settings.slot_window_minutes,
                        "max_attempts_per_slot": scheduler.MAX_ATTEMPTS_PER_SLOT,
                        "media_retention_hours": settings.media_retention_hours},
         "timezone": settings.timezone,
         "data_dir": str(settings.data_dir),
     }
+
+
+@ui.get("/render-font")
+def ui_render_font():
+    """The font ffmpeg draws the overlays with, so the editor preview uses the same letter widths."""
+    path = Path(settings.font_file)
+    if not path.is_file():
+        raise HTTPException(404, "Schrift nicht gefunden")
+    return FileResponse(path, media_type="font/ttf", headers={"Cache-Control": "max-age=86400"})
 
 
 @ui.post("/cleanup")
@@ -331,6 +340,7 @@ def ui_account(account_id: int):
     acc = _account_or_404(account_id)
     return {"account": _public_account(acc), "sources": db.list_sources(account_id),
             "posts": db.list_posts(30, account_id),
+            "presets": _presets(account_id), "preset_defaults": presets.DEFAULTS,
             "instagram_setup": {"configured": instagram.configured(), "business_name": settings.meta_business_name,
                                 "app_id": settings.meta_app_id, "business_id": settings.meta_business_id}}
 
@@ -386,6 +396,61 @@ def ui_source_add(account_id: int, body: SourceBody):
 def ui_source_delete(source_id: int):
     db.delete_source(source_id)
     return {"ok": True}
+
+
+class PresetBody(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    settings: dict = {}
+
+
+class ActivePresetBody(BaseModel):
+    preset_id: int | None = None
+
+
+def _presets(account_id: int) -> list[dict]:
+    return [{**p, "settings": presets.from_json(p["settings"])} for p in db.list_presets(account_id)]
+
+
+def _preset_or_404(preset_id: int) -> dict:
+    p = db.get_preset(preset_id)
+    if not p:
+        raise HTTPException(404, "Preset nicht gefunden")
+    return p
+
+
+def _presets_response(account_id: int, **extra) -> dict:
+    return {"presets": _presets(account_id), "account": _public_account(db.get_account(account_id)), **extra}
+
+
+@ui.post("/accounts/{account_id}/presets")
+def ui_preset_create(account_id: int, body: PresetBody):
+    _account_or_404(account_id)
+    pid = db.create_preset(account_id, body.name.strip(), presets.to_json(body.settings))
+    return _presets_response(account_id, id=pid)
+
+
+@ui.put("/presets/{preset_id}")
+def ui_preset_update(preset_id: int, body: PresetBody):
+    p = _preset_or_404(preset_id)
+    db.update_preset(preset_id, body.name.strip(), presets.to_json(body.settings))
+    return _presets_response(p["account_id"], id=preset_id)
+
+
+@ui.delete("/presets/{preset_id}")
+def ui_preset_delete(preset_id: int):
+    p = _preset_or_404(preset_id)
+    db.delete_preset(preset_id)
+    return _presets_response(p["account_id"])
+
+
+@ui.put("/accounts/{account_id}/preset")
+def ui_preset_activate(account_id: int, body: ActivePresetBody):
+    """Preset used for this account's renders (null = default style)."""
+    _account_or_404(account_id)
+    if body.preset_id is not None and _preset_or_404(body.preset_id)["account_id"] != account_id:
+        raise HTTPException(400, "Preset gehört zu einem anderen Account")
+    db.save_account({"preset_id": body.preset_id}, account_id)
+    return _presets_response(account_id)
 
 
 def _preview_job(account_id: int) -> None:

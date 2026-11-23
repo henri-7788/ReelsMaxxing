@@ -2,7 +2,7 @@
 
 import { ExternalLink, ListVideo, Play, X } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
-import { AccountDot, EmptyState, StatusPill } from "@/components/ui/kit"
+import { AccountDot, EmptyState, StatusPill, TonePill } from "@/components/ui/kit"
 import { displayStatus, fmtDateTime, formatSlot, type Post } from "@/lib/api"
 
 export function canView(p: Post) {
@@ -28,6 +28,7 @@ export function VideoCard({ p, onOpen, showAccount = true }: { p: Post; onOpen: 
         {p.error && <span className="line-clamp-2 text-xs text-danger">{p.error}</span>}
         <span className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-1 pt-1">
           <StatusPill post={p} />
+          {!!p.muted && <TonePill tone="warning">stumm</TonePill>}
           {showAccount && <span className="caption flex items-center gap-1.5"><AccountDot id={p.account_id} /> {p.account_name}</span>}
           {p.slot && <span className="caption tabular">{formatSlot(p.slot)}</span>}
         </span>
@@ -103,7 +104,7 @@ export function PostTable({ posts, onOpen, showAccount = true, empty = "Noch kei
                 {showAccount && <td><span className="flex items-center gap-2 whitespace-nowrap font-medium text-ink"><AccountDot id={p.account_id} /> {p.account_name}</span></td>}
                 <td className="whitespace-nowrap">{formatSlot(p.slot)}</td>
                 <td className="whitespace-nowrap text-ink-3">{fmtDateTime(p.updated_at)}</td>
-                <td><StatusPill post={p} /></td>
+                <td><span className="flex flex-wrap gap-1"><StatusPill post={p} />{!!p.muted && <TonePill tone="warning">stumm</TonePill>}</span></td>
                 <td className="text-right">
                   <button type="button" className="btn btn-sm" onClick={() => onOpen(p)}>{canView(p) ? <><Play size={14} /> Ansehen</> : "Details"}</button>
                 </td>
@@ -137,6 +138,7 @@ export function VideoDrawer({ post, onClose }: { post: Post | null; onClose: () 
   const rows: [string, string][] = [
     ["Account", post.account_name],
     ["Quelle", `r/${post.subreddit} · u/${post.author}`],
+    ["Ton", post.muted ? "Quelle ist stumm, Reel ohne Ton" : "Original-Ton von Reddit"],
     ["Slot", formatSlot(post.slot)],
     ["Erstellt", fmtDateTime(post.created_at)],
     ["Geändert", fmtDateTime(post.updated_at)],
@@ -147,7 +149,7 @@ export function VideoDrawer({ post, onClose }: { post: Post | null; onClose: () 
       <button type="button" className="absolute inset-0 bg-[var(--overlay)]" aria-label="Schließen" onClick={onClose} />
       <aside className="absolute inset-0 flex flex-col overflow-y-auto bg-surface shadow-lg md:inset-y-0 md:left-auto md:w-[480px] md:border-l md:border-line">
         <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-line bg-surface px-5 py-3">
-          <StatusPill post={post} />
+          <span className="flex gap-2"><StatusPill post={post} />{!!post.muted && <TonePill tone="warning">stumm</TonePill>}</span>
           <button type="button" className="icon-btn" aria-label="Schließen" onClick={onClose} autoFocus><X size={20} /></button>
         </header>
         <div className="flex flex-col gap-5 p-5">

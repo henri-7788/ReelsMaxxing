@@ -8,15 +8,17 @@ import { PerformanceCard, PostingTimesCard, statsPath } from "@/components/cards
 import { KpiCard } from "@/components/charts/KpiCard"
 import { PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
 import { ConnectChecklist, ConnectOverlay, useInstagramConnect } from "@/components/InstagramConnect"
+import { PresetEditor } from "@/components/ReelEditor"
 import { Sources } from "@/components/Sources"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
 import { accountBody, api, formatSlot, parseTimes, tokenDaysLeft, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
+import type { Preset } from "@/lib/overlay"
 
 type Form = ReturnType<typeof accountBody>
-type Tab = "overview" | "content" | "schedule" | "history"
+type Tab = "overview" | "content" | "editor" | "schedule" | "history"
 const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: true, posting_times: "18:00", caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
 const PLACEHOLDERS = ["{title}", "{author}", "{subreddit}", "{permalink}", "{hashtags}"]
 
@@ -66,11 +68,12 @@ export default function AccountPage() {
   const toast = useToast()
   const { reload: reloadAll } = useData()
   const id = Number(params.get("id")) || null
-  const tab = (["overview", "content", "schedule", "history"].includes(params.get("tab") ?? "") ? params.get("tab") : "overview") as Tab
+  const tab = (["overview", "content", "editor", "schedule", "history"].includes(params.get("tab") ?? "") ? params.get("tab") : "overview") as Tab
 
   const [account, setAccount] = useState<Account | null>(null)
   const [sources, setSources] = useState<Source[]>([])
   const [posts, setPosts] = useState<Post[]>([])
+  const [presets, setPresets] = useState<Preset[]>([])
   const [form, setForm] = useState<Form>(EMPTY)
   const [saved, setSaved] = useState<Form>(EMPTY)
   const [loading, setLoading] = useState(true)
@@ -94,7 +97,8 @@ export default function AccountPage() {
       return
     }
     try {
-      const d = await api<{ account: Account; sources: Source[]; posts: Post[]; instagram_setup?: { business_name: string; app_id?: string; business_id?: string } }>(`/accounts/${id}`)
+      const d = await api<{ account: Account; sources: Source[]; posts: Post[]; presets?: Preset[]; instagram_setup?: { business_name: string; app_id?: string; business_id?: string } }>(`/accounts/${id}`)
+      setPresets(d.presets ?? [])
       setAccount(d.account)
       setBusinessName(d.instagram_setup?.business_name ?? "")
       setMetaAppId(d.instagram_setup?.app_id ?? "")
@@ -326,7 +330,7 @@ export default function AccountPage() {
       </header>
 
       <div className="max-w-full overflow-x-auto">
-        <Segmented<Tab> label="Bereich" value={tab} onChange={setTab} options={[{ value: "overview", label: "Übersicht" }, { value: "content", label: "Inhalt & Quellen" }, { value: "schedule", label: "Zeitplan" }, { value: "history", label: "Verlauf" }]} />
+        <Segmented<Tab> label="Bereich" value={tab} onChange={setTab} options={[{ value: "overview", label: "Übersicht" }, { value: "content", label: "Inhalt & Quellen" }, { value: "editor", label: "Editor" }, { value: "schedule", label: "Zeitplan" }, { value: "history", label: "Verlauf" }]} />
       </div>
 
       {tab === "overview" && (
@@ -360,6 +364,12 @@ export default function AccountPage() {
             </section>
           </div>
         </div>
+      )}
+
+      {tab === "editor" && (
+        <PresetEditor account={{ ...account, hook_enabled: form.hook_enabled }} presets={presets}
+          sample={posts[0] ? { title: posts[0].title, author: posts[0].author, subreddit: posts[0].subreddit } : undefined}
+          onChange={(r) => { setPresets(r.presets); setAccount((a) => (a ? { ...a, preset_id: r.account.preset_id } : a)) }} />
       )}
 
       {tab === "schedule" && (

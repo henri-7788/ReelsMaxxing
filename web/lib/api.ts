@@ -23,6 +23,7 @@ export type Account = {
   caption_template: string
   hashtags: string
   hook_enabled: boolean
+  preset_id: number | null
   next_slot: string | null
   created_at: string
   sources?: Source[]
@@ -43,6 +44,7 @@ export type Post = {
   ig_media_id: string | null
   error: string | null
   slot: string | null
+  muted?: number
   created_at: string
   updated_at: string
 }
@@ -110,7 +112,7 @@ export type SettingsInfo = {
   api: { key_set: boolean; public_base_url: string; last_n8n_poll: number | null }
   instagram: { configured: boolean; app_id: string; config_id: string; redirect_uri: string; deauthorize_url: string; data_deletion_url: string; graph_api_base: string }
   ui_auth: boolean
-  render: { encoder: string; x264_preset: string; width: number; height: number; loudness_lufs: number }
+  render: { encoder: string; x264_preset: string; width: number; height: number; loudness_lufs: number; preset_defaults: Record<string, unknown> }
   automation: { slot_window_minutes: number; max_attempts_per_slot: number; media_retention_hours: number }
   timezone: string
   data_dir: string
