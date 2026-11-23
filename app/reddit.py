@@ -183,3 +183,52 @@ def _stream(client: httpx.Client, url: str, path: Path) -> None:
         with open(path, "wb") as f:
             for chunk in r.iter_bytes(1 << 16):
                 f.write(chunk)
+
+
+# ------------------------------------------------------------ subreddit search
+_search_cache: dict[tuple[str, bool], tuple[float, list[dict]]] = {}
+SEARCH_CACHE_SECONDS = 600
+
+
+def _subreddit_item(d: dict) -> dict | None:
+    name = d.get("display_name") or ""
+    if not name or d.get("subreddit_type") == "user" or name.startswith("u_"):
+        return None
+    icon = (d.get("community_icon") or d.get("icon_img") or "").split("?")[0]
+    return {
+        "name": name,
+        "title": d.get("title") or "",
+        "subscribers": int(d.get("subscribers") or 0),
+        "over18": bool(d.get("over18")),
+        "icon": icon if icon.startswith("https://") else "",
+    }
+
+
+def search_subreddits(query: str, include_nsfw: bool = True, limit: int = 8,
+                      client: httpx.Client | None = None) -> list[dict]:
+    """Subreddit suggestions for the add-source form (Reddit's autocomplete, cached for 10 minutes).
+    Uses OAuth when client id/secret are set, otherwise Reddit's public JSON endpoint."""
+    q = query.strip().removeprefix("/").removeprefix("r/").strip("/ ")
+    if len(q) < 2:
+        return []
+    key = (q.lower(), include_nsfw)
+    hit = _search_cache.get(key)
+    if hit and hit[0] > time.time():
+        return hit[1][:limit]
+    params = {"query": q, "limit": 10, "include_over_18": str(include_nsfw).lower(),
+              "include_profiles": "false", "raw_json": 1, "typeahead_active": "true"}
+    with client or httpx.Client(timeout=10, follow_redirects=True) as c:
+        if settings.reddit_client_id:
+            token = get_token(c)
+            r = c.get("https://oauth.reddit.com/api/subreddit_autocomplete_v2", params=params,
+                      headers={**_headers(), "Authorization": f"bearer {token}"})
+        else:
+            r = c.get("https://www.reddit.com/api/subreddit_autocomplete_v2.json", params=params, headers=_headers())
+    if r.status_code != 200:
+        raise RedditError(f"Subreddit-Suche: HTTP {r.status_code}")
+    items = [_subreddit_item(ch.get("data") or {}) for ch in r.json().get("data", {}).get("children", [])]
+    found = [i for i in items if i and (include_nsfw or not i["over18"])]
+    if len(_search_cache) > 500:
+        _search_cache.clear()
+    _search_cache[key] = (time.time() + SEARCH_CACHE_SECONDS, found)
+    return found[:limit]
