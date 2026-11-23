@@ -39,6 +39,7 @@ export function ReelPreview({ style, sample = SAMPLE, hook = true, width = 270, 
   onOverflow?: (overflow: boolean) => void
 }) {
   const scale = width / FRAME.w
+  hook = hook && style.hook_enabled
   const { lines } = hookLines(sample.title, style.hook_chars_per_line, style.hook_max_lines)
   const hookRef = useRef<HTMLDivElement>(null)
   // Re-measure once the render font has loaded (it changes the text width)
@@ -51,7 +52,7 @@ export function ReelPreview({ style, sample = SAMPLE, hook = true, width = 270, 
   const fgH = portrait ? FRAME.h : Math.round(FRAME.w * 9 / 16)
   return (
     <div className="relative mx-auto overflow-hidden rounded-[16px] border border-line bg-black" style={{ width, height: FRAME.h * scale }}
-      role="img" aria-label={`Vorschau: ${hook && lines.length ? lines.join(" ") + ", " : ""}Quelle ${CREDIT_POSITIONS.find((p) => p.value === style.credit_position)?.label.toLowerCase()}`}>
+      role="img" aria-label={`Vorschau: ${hook && lines.length ? lines.join(" ") + ", " : "ohne Titel, "}${style.credit_enabled ? `Quelle ${CREDIT_POSITIONS.find((p) => p.value === style.credit_position)?.label.toLowerCase()}` : "ohne Quellenangabe"}`}>
       <style>{FONT_FACE}</style>
       <div className="absolute left-0 top-0 origin-top-left" style={{ width: FRAME.w, height: FRAME.h, transform: `scale(${scale})`, fontFamily: FONT, fontWeight: 700 }}>
         {/* blurred background copy of the video */}
@@ -68,12 +69,14 @@ export function ReelPreview({ style, sample = SAMPLE, hook = true, width = 270, 
             {lines.join("\n")}
           </div>
         )}
-        <div className="absolute whitespace-pre" style={{
-          ...creditBoxStyle(style.credit_position), padding: CREDIT_PAD, fontSize: style.credit_font_size,
-          lineHeight: `${style.credit_font_size * LINE}px`, color: "rgba(255,255,255,0.9)", background: `rgba(0,0,0,${style.credit_box_opacity})`,
-        }}>
-          {`Video: u/${sample.author} · r/${sample.subreddit}`}
-        </div>
+        {style.credit_enabled && (
+          <div className="absolute whitespace-pre" style={{
+            ...creditBoxStyle(style.credit_position), padding: CREDIT_PAD, fontSize: style.credit_font_size,
+            lineHeight: `${style.credit_font_size * LINE}px`, color: "rgba(255,255,255,0.9)", background: `rgba(0,0,0,${style.credit_box_opacity})`,
+          }}>
+            {`Video: u/${sample.author} · r/${sample.subreddit}`}
+          </div>
+        )}
         {safeZone && (
           <div aria-hidden="true">
             <div className="absolute inset-x-0 top-0" style={{ height: 220, background: "repeating-linear-gradient(135deg,rgba(255,80,80,.28) 0 18px,rgba(255,80,80,.12) 18px 36px)" }} />
@@ -98,17 +101,25 @@ function Slider({ label, k, value, onChange, format = (v) => String(v) }: {
   )
 }
 
-function Group({ title, children }: { title: string; children: ReactNode }) {
-  return <fieldset className="flex flex-col gap-4 border-t border-line pt-4 first:border-t-0 first:pt-0"><legend className="overline mb-3">{title}</legend>{children}</fieldset>
+function Group({ title, on, onToggle, children }: { title: string; on: boolean; onToggle: (v: boolean) => void; children: ReactNode }) {
+  return (
+    <fieldset className="flex flex-col gap-4">
+      <legend className="mb-3 flex w-full items-center justify-between gap-3">
+        <span className="overline">{title}</span>
+        <Switch checked={on} onChange={onToggle} label={`${title} anzeigen`}>{on ? "an" : "aus"}</Switch>
+      </legend>
+      {on ? children : <p className="hint">Wird nicht ins Video geschrieben.</p>}
+    </fieldset>
+  )
 }
 
 const pct = (v: number) => `${Math.round(v * 100)} %`
 
-type PresetsResponse = { presets: Preset[]; account: Account; id?: number }
+export type PresetsResponse = { presets: Preset[]; account?: Account; id?: number }
 
-/** Per-account editor: live preview, presets (save, rename, delete) and the preset used for renders. */
-export function PresetEditor({ account, presets, sample, onChange }: {
-  account: Account; presets: Preset[]; sample?: Sample; onChange: (r: PresetsResponse) => void
+/** Editor in each account: live preview, global presets (save, rename, delete) and the preset this account renders with. */
+export function PresetEditor({ account, presets, sample, onChange, onEnableHook }: {
+  account: Account; presets: Preset[]; sample?: Sample; onChange: (r: PresetsResponse) => void; onEnableHook?: () => void
 }) {
   const toast = useToast()
   const activeId = account.preset_id ?? null
@@ -151,10 +162,11 @@ export function PresetEditor({ account, presets, sample, onChange }: {
   const createPreset = async () => {
     const n = newName.trim()
     if (!n) return
-    const r = await run(() => api(`/accounts/${account.id}/presets`, { method: "POST", body: { name: n, settings: style } }), `Preset „${n}“ gespeichert`)
+    const r = await run(() => api("/presets", { method: "POST", body: { name: n, settings: style } }), `Preset „${n}“ gespeichert`)
     if (r?.id) { setSelected(r.id); setNewName("") }
   }
-  const updatePreset = () => current && run(() => api(`/presets/${current.id}`, { method: "PUT", body: { name: name.trim() || current.name, settings: style } }), "Preset gespeichert")
+  const updatePreset = () => current && run(() => api(`/presets/${current.id}`, { method: "PUT", body: { name: name.trim() || current.name, settings: style } }),
+    current.used_by.length > 1 ? `Preset gespeichert, gilt für ${current.used_by.length} Accounts` : "Preset gespeichert")
   const activate = (id: number | null) => run(() => api(`/accounts/${account.id}/preset`, { method: "PUT", body: { preset_id: id } }),
     id ? "Neue Renders nutzen jetzt dieses Preset" : "Neue Renders nutzen wieder den Standard")
   const remove = async () => {
@@ -179,14 +191,20 @@ export function PresetEditor({ account, presets, sample, onChange }: {
             Beispieltitel
             <textarea className="field !text-[13px]" rows={3} value={sampleTitle} onChange={(e) => setSampleTitle(e.target.value)} />
           </label>
-          {!account.hook_enabled && <p className="hint">Der Hook-Text ist für diesen Account unter „Inhalt & Quellen“ ausgeschaltet.</p>}
-          {overflow && account.hook_enabled && <p role="alert" className="rounded-[10px] border border-warning bg-warning-bg px-3 py-2 text-[13px] text-ink">Der Hook-Text ist breiter als das Video und wird links und rechts abgeschnitten. Schrift kleiner stellen oder weniger Zeichen pro Zeile.</p>}
-          {cut && account.hook_enabled && <p className="hint">Der Titel ist zu lang und wird nach {style.hook_max_lines} Zeilen mit „…“ abgeschnitten.</p>}
+          {!account.hook_enabled && (
+            <p className="rounded-[10px] border border-warning bg-warning-bg px-3 py-2 text-[13px] text-ink">
+              Der Titel ist für diesen Account noch über den alten Schalter ausgeschaltet und erscheint deshalb nie.{" "}
+              {onEnableHook && <button type="button" className="link" onClick={onEnableHook}>Wieder einschalten</button>}
+            </p>
+          )}
+          {!style.hook_enabled && !style.credit_enabled && <p className="hint">Dieses Preset rendert das Video ganz ohne Text.</p>}
+          {overflow && account.hook_enabled && style.hook_enabled && <p role="alert" className="rounded-[10px] border border-warning bg-warning-bg px-3 py-2 text-[13px] text-ink">Der Hook-Text ist breiter als das Video und wird links und rechts abgeschnitten. Schrift kleiner stellen oder weniger Zeichen pro Zeile.</p>}
+          {cut && account.hook_enabled && style.hook_enabled && <p className="hint">Der Titel ist zu lang und wird nach {style.hook_max_lines} Zeilen mit „…“ abgeschnitten.</p>}
         </div>
       </Card>
 
       <Card className="col-span-12 lg:col-span-7 xl:col-span-8">
-        <CardHeader title="Presets" sub="Gespeicherte Einstellungen für diesen Account. Neue Renders nutzen das aktive Preset." />
+        <CardHeader title="Presets" sub="Presets gelten für alle Accounts. Jeder Account wählt eins für seine Renders aus." />
         <div className="mb-5 flex flex-wrap gap-2" role="radiogroup" aria-label="Preset bearbeiten">
           {options.map((o) => (
             <button key={o.id ?? "default"} type="button" role="radio" aria-checked={selected === o.id} onClick={() => setSelected(o.id)}
@@ -197,20 +215,29 @@ export function PresetEditor({ account, presets, sample, onChange }: {
         </div>
 
         <div className="mb-5 flex flex-wrap items-center gap-3 rounded-[10px] border border-line bg-surface-2 px-3 py-2">
-          <span className="flex-1 text-ink">{current ? <>Preset <b>{current.name}</b></> : "Standard-Einstellungen"}</span>
+          <span className="min-w-0 flex-1 text-ink">
+            {current ? <>Preset <b>{current.name}</b></> : "Standard-Einstellungen"}
+            {current && current.used_by.length > 0 && <span className="caption block">Genutzt von: {current.used_by.map((u) => u.name).join(", ")}</span>}
+          </span>
           {activeId === selected ? <TonePill tone="success">für Renders aktiv</TonePill>
             : <button type="button" className="btn btn-sm" disabled={busy || dirty} title={dirty ? "Erst speichern" : undefined} onClick={() => activate(selected)}>Für Renders verwenden</button>}
         </div>
 
+        <div className="mb-5">
+          <Switch checked={style.hook_enabled || style.credit_enabled} onChange={(v) => setStyle((s) => ({ ...s, hook_enabled: v, credit_enabled: v }))}>
+            Text im Video anzeigen
+          </Switch>
+        </div>
+
         <div className="grid gap-6 md:grid-cols-2">
-          <Group title="Hook-Text oben">
+          <Group title="Titel oben" on={style.hook_enabled} onToggle={(v) => set("hook_enabled", v)}>
             <Slider label="Schriftgröße" k="hook_font_size" value={style.hook_font_size} onChange={(v) => set("hook_font_size", v)} format={(v) => `${v} px`} />
             <Slider label="Abstand von oben" k="hook_top" value={style.hook_top} onChange={(v) => set("hook_top", v)} format={(v) => `${v} px`} />
             <Slider label="Zeichen pro Zeile" k="hook_chars_per_line" value={style.hook_chars_per_line} onChange={(v) => set("hook_chars_per_line", v)} />
             <Slider label="Höchstens Zeilen" k="hook_max_lines" value={style.hook_max_lines} onChange={(v) => set("hook_max_lines", v)} format={(v) => `${v}, danach „…“`} />
             <Slider label="Hintergrund" k="hook_box_opacity" value={style.hook_box_opacity} onChange={(v) => set("hook_box_opacity", v)} format={pct} />
           </Group>
-          <Group title="Quellenangabe">
+          <Group title="Quellenangabe" on={style.credit_enabled} onToggle={(v) => set("credit_enabled", v)}>
             <label className="label">
               Position
               <select className="field" value={style.credit_position} onChange={(e) => set("credit_position", e.target.value as CreditPosition)}>
@@ -247,7 +274,9 @@ export function PresetEditor({ account, presets, sample, onChange }: {
       </Card>
 
       <ConfirmDialog open={confirmDelete} title={`Preset „${current?.name ?? ""}“ löschen?`} confirmLabel="Löschen" onConfirm={remove} onClose={() => setConfirmDelete(false)} busy={busy}>
-        {activeId === current?.id ? "Dieses Preset ist aktiv. Neue Renders nutzen danach wieder den Standard." : "Bereits gerenderte Videos bleiben unverändert."}
+        {current && current.used_by.length > 0
+          ? `Genutzt von ${current.used_by.map((u) => u.name).join(", ")}. Diese Accounts rendern danach wieder mit dem Standard.`
+          : "Bereits gerenderte Videos bleiben unverändert."}
       </ConfirmDialog>
     </div>
   )

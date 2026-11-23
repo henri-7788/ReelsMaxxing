@@ -13,24 +13,52 @@ def test_normalize_clamps_and_fills():
     assert presets.normalize(None) == presets.DEFAULTS
 
 
-def test_preset_crud_and_activation():
+def test_presets_are_global():
     c = TestClient(app)
     aid = c.post("/ui-api/accounts", json={"name": "Tiere"}).json()["id"]
     other = c.post("/ui-api/accounts", json={"name": "Autos"}).json()["id"]
-    r = c.post(f"/ui-api/accounts/{aid}/presets", json={"name": "Groß", "settings": {"hook_font_size": 80}}).json()
+    r = c.post("/ui-api/presets", json={"name": "Groß", "settings": {"hook_font_size": 80}}).json()
     pid = r["id"]
     assert r["presets"][0]["settings"]["hook_font_size"] == 80
     assert pipeline.account_style(db.get_account(aid)) == presets.DEFAULTS
+    # both accounts can use the same preset
     r = c.put(f"/ui-api/accounts/{aid}/preset", json={"preset_id": pid}).json()
     assert r["account"]["preset_id"] == pid
-    assert pipeline.account_style(db.get_account(aid))["hook_font_size"] == 80
-    assert c.put(f"/ui-api/accounts/{other}/preset", json={"preset_id": pid}).status_code == 400
+    c.put(f"/ui-api/accounts/{other}/preset", json={"preset_id": pid})
+    assert {u["name"] for u in c.get("/ui-api/presets").json()["presets"][0]["used_by"]} == {"Tiere", "Autos"}
     c.put(f"/ui-api/presets/{pid}", json={"name": "Größer", "settings": {"hook_font_size": 90}})
-    assert pipeline.account_style(db.get_account(aid))["hook_font_size"] == 90
-    detail = c.get(f"/ui-api/accounts/{aid}").json()
-    assert detail["presets"][0]["name"] == "Größer" and detail["preset_defaults"] == presets.DEFAULTS
-    r = c.delete(f"/ui-api/presets/{pid}").json()
-    assert r["presets"] == [] and r["account"]["preset_id"] is None
+    assert pipeline.account_style(db.get_account(other))["hook_font_size"] == 90
+    assert c.get(f"/ui-api/accounts/{other}").json()["presets"][0]["name"] == "Größer"
+    # deleting an account keeps the preset for the others
+    c.delete(f"/ui-api/accounts/{aid}")
+    assert len(c.get("/ui-api/presets").json()["presets"]) == 1
+    assert c.put(f"/ui-api/accounts/{other}/preset", json={"preset_id": 999}).status_code == 404
+    assert c.delete(f"/ui-api/presets/{pid}").json()["presets"] == []
+    assert db.get_account(other)["preset_id"] is None
+
+
+def test_old_account_presets_become_global():
+    with db.tx() as c:
+        c.executescript("""
+            DROP TABLE presets;
+            CREATE TABLE presets (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            INSERT INTO accounts (name, created_at) VALUES ('Tiere', 'x');
+            INSERT INTO presets (account_id, name, settings, created_at, updated_at) VALUES (1, 'Alt', '{}', 'x', 'x');
+        """)
+    db.init_db()
+    db.delete_account(1)
+    assert [p["name"] for p in db.list_presets()] == ["Alt"]
+
+
+def test_text_parts_can_be_switched_off(tmp_path):
+    from app import render
+    off = render.build_filter(tmp_path / "h.txt", tmp_path / "c.txt", False, {"hook_enabled": False, "credit_enabled": False})
+    assert "drawtext" not in off and off.endswith("[base]format=yuv420p[v]")
+    only_credit = render.build_filter(tmp_path / "h.txt", tmp_path / "c.txt", False, {"hook_enabled": False})
+    assert only_credit.count("drawtext") == 1 and "c.txt" in only_credit
+    assert presets.normalize({"credit_enabled": "nein"})["credit_enabled"] is True
 
 
 MPD = """<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011"><Period>

@@ -340,7 +340,7 @@ def ui_account(account_id: int):
     acc = _account_or_404(account_id)
     return {"account": _public_account(acc), "sources": db.list_sources(account_id),
             "posts": db.list_posts(30, account_id),
-            "presets": _presets(account_id), "preset_defaults": presets.DEFAULTS,
+            "presets": _presets(), "preset_defaults": presets.DEFAULTS,
             "instagram_setup": {"configured": instagram.configured(), "business_name": settings.meta_business_name,
                                 "app_id": settings.meta_app_id, "business_id": settings.meta_business_id}}
 
@@ -407,8 +407,8 @@ class ActivePresetBody(BaseModel):
     preset_id: int | None = None
 
 
-def _presets(account_id: int) -> list[dict]:
-    return [{**p, "settings": presets.from_json(p["settings"])} for p in db.list_presets(account_id)]
+def _presets() -> list[dict]:
+    return [{**p, "settings": presets.from_json(p["settings"])} for p in db.list_presets()]
 
 
 def _preset_or_404(preset_id: int) -> dict:
@@ -418,39 +418,40 @@ def _preset_or_404(preset_id: int) -> dict:
     return p
 
 
-def _presets_response(account_id: int, **extra) -> dict:
-    return {"presets": _presets(account_id), "account": _public_account(db.get_account(account_id)), **extra}
+# Presets are global: every account can pick any of them for its renders
+@ui.get("/presets")
+def ui_presets():
+    return {"presets": _presets(), "defaults": presets.DEFAULTS}
 
 
-@ui.post("/accounts/{account_id}/presets")
-def ui_preset_create(account_id: int, body: PresetBody):
-    _account_or_404(account_id)
-    pid = db.create_preset(account_id, body.name.strip(), presets.to_json(body.settings))
-    return _presets_response(account_id, id=pid)
+@ui.post("/presets")
+def ui_preset_create(body: PresetBody):
+    pid = db.create_preset(body.name.strip(), presets.to_json(body.settings))
+    return {"presets": _presets(), "id": pid}
 
 
 @ui.put("/presets/{preset_id}")
 def ui_preset_update(preset_id: int, body: PresetBody):
-    p = _preset_or_404(preset_id)
+    _preset_or_404(preset_id)
     db.update_preset(preset_id, body.name.strip(), presets.to_json(body.settings))
-    return _presets_response(p["account_id"], id=preset_id)
+    return {"presets": _presets(), "id": preset_id}
 
 
 @ui.delete("/presets/{preset_id}")
 def ui_preset_delete(preset_id: int):
-    p = _preset_or_404(preset_id)
+    _preset_or_404(preset_id)
     db.delete_preset(preset_id)
-    return _presets_response(p["account_id"])
+    return {"presets": _presets()}
 
 
 @ui.put("/accounts/{account_id}/preset")
 def ui_preset_activate(account_id: int, body: ActivePresetBody):
     """Preset used for this account's renders (null = default style)."""
     _account_or_404(account_id)
-    if body.preset_id is not None and _preset_or_404(body.preset_id)["account_id"] != account_id:
-        raise HTTPException(400, "Preset gehört zu einem anderen Account")
+    if body.preset_id is not None:
+        _preset_or_404(body.preset_id)
     db.save_account({"preset_id": body.preset_id}, account_id)
-    return _presets_response(account_id)
+    return {"presets": _presets(), "account": _public_account(db.get_account(account_id))}
 
 
 def _preview_job(account_id: int) -> None:
