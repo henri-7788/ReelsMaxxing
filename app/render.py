@@ -35,14 +35,16 @@ def build_filter(hook_file: Path | None, credit_file: Path, vaapi: bool, style: 
         f"[b]scale={W}:{H}:force_original_aspect_ratio=decrease,setsar=1[fg]",
         "[bg][fg]overlay=(W-w)/2:(H-h)/2[base]",
     ]
-    chain = "[base]"
-    if hook_file is not None:
-        chain += (f"drawtext=fontfile={font}:textfile={hook_file}:expansion=none:fontsize={st['hook_font_size']}:"
-                  f"fontcolor=white:line_spacing=14:box=1:boxcolor=black@{st['hook_box_opacity']}:boxborderw=26:"
-                  f"x=(w-text_w)/2:y={st['hook_top']},")
-    chain += (f"drawtext=fontfile={font}:textfile={credit_file}:expansion=none:fontsize={st['credit_font_size']}:"
-              f"fontcolor=white@0.9:box=1:boxcolor=black@{st['credit_box_opacity']}:boxborderw=12:x={cx}:y={cy}")
-    chain += ",format=nv12,hwupload[v]" if vaapi else ",format=yuv420p[v]"
+    texts = []
+    if hook_file is not None and st["hook_enabled"]:
+        texts.append(f"drawtext=fontfile={font}:textfile={hook_file}:expansion=none:fontsize={st['hook_font_size']}:"
+                     f"fontcolor=white:line_spacing=14:box=1:boxcolor=black@{st['hook_box_opacity']}:boxborderw=26:"
+                     f"x=(w-text_w)/2:y={st['hook_top']}")
+    if st["credit_enabled"]:
+        texts.append(f"drawtext=fontfile={font}:textfile={credit_file}:expansion=none:fontsize={st['credit_font_size']}:"
+                     f"fontcolor=white@0.9:box=1:boxcolor=black@{st['credit_box_opacity']}:boxborderw=12:x={cx}:y={cy}")
+    texts.append("format=nv12,hwupload" if vaapi else "format=yuv420p")
+    chain = "[base]" + ",".join(texts) + "[v]"
     parts.append(chain)
     return ";".join(parts)
 

@@ -19,6 +19,8 @@ CREDIT_POSITIONS: dict[str, tuple[str, str]] = {
 }
 
 DEFAULTS: dict = {
+    "hook_enabled": True,     # post title at the top
+    "credit_enabled": True,   # "Video: u/... · r/..." line
     "hook_font_size": 62,
     "hook_top": 250,
     "hook_max_lines": 3,
@@ -54,6 +56,9 @@ def normalize(raw: dict | None) -> dict:
             continue
         val = min(max(val, lo), hi)
         out[key] = round(val, 2) if isinstance(DEFAULTS[key], float) else int(round(val))
+    for key in ("hook_enabled", "credit_enabled"):
+        if isinstance(raw.get(key), bool):
+            out[key] = raw[key]
     if raw.get("credit_position") in CREDIT_POSITIONS:
         out["credit_position"] = raw["credit_position"]
     return out

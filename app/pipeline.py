@@ -23,7 +23,7 @@ class MissingAudio(RuntimeError):
 def account_style(account: dict) -> dict:
     """Overlay style for renders of this account: its active preset or the defaults."""
     preset = db.get_preset(account["preset_id"]) if account.get("preset_id") else None
-    if preset and preset["account_id"] == account["id"]:
+    if preset:
         return presets.from_json(preset["settings"])
     return dict(presets.DEFAULTS)
 
@@ -65,7 +65,7 @@ def _build(account: dict, item: dict, slot: str | None) -> tuple[int, str, str, 
         style = account_style(account)
         media_file = f"{post_id}-{secrets.token_urlsafe(12)}.mp4"
         hook = (hook_lines(item["title"], style["hook_chars_per_line"], style["hook_max_lines"])
-                if account["hook_enabled"] else None)
+                if account["hook_enabled"] and style["hook_enabled"] else None)
         credit = f"Video: u/{item['author']} · r/{item['subreddit']}"
         render.render(video, audio, settings.media_dir / media_file, hook, credit, work, style=style)
         caption = build_caption(account["caption_template"], item, account["hashtags"])

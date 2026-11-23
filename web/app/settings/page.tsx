@@ -8,7 +8,7 @@ import { ReelPreview } from "@/components/ReelEditor"
 import { Card, CardHeader, ErrorState, Segmented, SkeletonRows, TonePill } from "@/components/ui/kit"
 import { relTime, type SettingsInfo } from "@/lib/api"
 import { useApi, useData, type Theme } from "@/lib/data"
-import { DEFAULT_STYLE } from "@/lib/overlay"
+import { DEFAULT_STYLE, type Preset } from "@/lib/overlay"
 
 type Tab = "access" | "render" | "automation" | "system" | "look"
 const TABS: { value: Tab; label: string }[] = [
@@ -35,6 +35,7 @@ export default function SettingsPage() {
   const { accounts, theme, themeChoice, setTheme } = useData()
   const tab = (TABS.some((t) => t.value === params.get("tab")) ? params.get("tab") : "access") as Tab
   const { data: cfg, error, loading, reload } = useApi<SettingsInfo>("/settings")
+  const presetList = useApi<{ presets: Preset[] }>(tab === "render" ? "/presets" : null)
 
   return (
     <div className="flex flex-col gap-4 md:gap-6 lg:flex-row">
@@ -91,8 +92,8 @@ export default function SettingsPage() {
               <CardHeader title="Standard-Preset" sub="So wird jedes Video für Instagram aufbereitet" />
               <Row label="Format">{cfg.render.width} × {cfg.render.height} px (9:16), H.264/AAC</Row>
               <Row label="Zuschnitt">Original mittig auf unscharfem Hintergrund</Row>
-              <Row label="Hook-Text oben" hint="pro Account schaltbar">Titel des Reddit-Posts, nach {DEFAULT_STYLE.hook_max_lines} Zeilen mit „…“ gekürzt</Row>
-              <Row label="Quellenangabe" hint="immer an">Video: u/autor · r/subreddit, klein unten links</Row>
+              <Row label="Titel oben" hint="pro Preset abschaltbar">Titel des Reddit-Posts, nach {DEFAULT_STYLE.hook_max_lines} Zeilen mit „…“ gekürzt</Row>
+              <Row label="Quellenangabe" hint="pro Preset abschaltbar">Video: u/autor · r/subreddit, klein unten links</Row>
               <Row label="Ton">Reddit-Tonspur, auf {cfg.render.loudness_lufs} LUFS angeglichen. Stumme Quellen werden markiert.</Row>
               <Row label="Reihenfolge">Ein Video nach dem anderen, damit der Mini-PC nicht überlastet</Row>
             </Card>
@@ -101,11 +102,11 @@ export default function SettingsPage() {
               <ReelPreview style={DEFAULT_STYLE} width={216} />
             </Card>
             <Card className="col-span-12">
-              <CardHeader title="Eigene Presets pro Account" sub="Schriftgröße, Position und Zeilen mit Live-Vorschau einstellen und als Preset speichern" />
+              <CardHeader title="Presets" sub={`${presetList.data?.presets.length ?? 0} gespeichert, für alle Accounts nutzbar. Bearbeitet werden sie im Editor eines Accounts.`} />
               {accounts.length === 0 ? <p className="text-ink-3">Noch keine Accounts.</p> : accounts.map((a) => (
                 <Row key={a.id} label={a.name}>
                   <span className="flex items-center gap-3 sm:justify-end">
-                    <span className="caption">{a.preset_id ? "eigenes Preset aktiv" : "Standard"}</span>
+                    <span className="caption">{presetList.data?.presets.find((p) => p.id === a.preset_id)?.name ?? "Standard"}</span>
                     <Link href={`/account?id=${a.id}&tab=editor`} className="btn btn-sm">Editor öffnen</Link>
                   </span>
                 </Row>

@@ -5,6 +5,8 @@
 export type CreditPosition = "bottom_left" | "bottom_center" | "top_left" | "top_right"
 
 export type OverlayStyle = {
+  hook_enabled: boolean
+  credit_enabled: boolean
   hook_font_size: number
   hook_top: number
   hook_max_lines: number
@@ -15,14 +17,17 @@ export type OverlayStyle = {
   credit_box_opacity: number
 }
 
-export type Preset = { id: number; account_id: number; name: string; settings: OverlayStyle; created_at: string; updated_at: string }
+/** Presets are global: every account can use any of them. used_by = accounts rendering with it. */
+export type Preset = { id: number; name: string; settings: OverlayStyle; used_by: { id: number; name: string }[]; created_at: string; updated_at: string }
 
 export const DEFAULT_STYLE: OverlayStyle = {
+  hook_enabled: true, credit_enabled: true,
   hook_font_size: 62, hook_top: 250, hook_max_lines: 3, hook_chars_per_line: 24, hook_box_opacity: 0.55,
   credit_position: "bottom_left", credit_font_size: 30, credit_box_opacity: 0.4,
 }
 
-export const LIMITS: Record<Exclude<keyof OverlayStyle, "credit_position">, [number, number, number]> = {
+type NumericKey = Exclude<keyof OverlayStyle, "credit_position" | "hook_enabled" | "credit_enabled">
+export const LIMITS: Record<NumericKey, [number, number, number]> = {
   // min, max, step
   hook_font_size: [36, 96, 1],
   hook_top: [200, 900, 10],
@@ -87,6 +92,7 @@ export function normalizeStyle(raw: Partial<OverlayStyle> | null | undefined): O
     const v = Number(raw?.[k])
     if (raw && k in raw && Number.isFinite(v)) out[k] = Math.min(hi, Math.max(lo, v))
   }
+  for (const k of ["hook_enabled", "credit_enabled"] as const) if (typeof raw?.[k] === "boolean") out[k] = raw[k]
   if (raw?.credit_position && CREDIT_POSITIONS.some((p) => p.value === raw.credit_position)) out.credit_position = raw.credit_position
   return out
 }

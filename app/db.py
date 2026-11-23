@@ -52,7 +52,6 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 CREATE TABLE IF NOT EXISTS presets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     settings TEXT NOT NULL DEFAULT '{}',
     created_at TEXT NOT NULL,
@@ -114,6 +113,26 @@ def init_db() -> None:
             have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
             if col not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+        _make_presets_global(c)
+
+
+def _make_presets_global(c: sqlite3.Connection) -> None:
+    """Presets used to belong to one account (deleted with it). Now every account can use every preset."""
+    if "account_id" not in {r[1] for r in c.execute("PRAGMA table_info(presets)")}:
+        return
+    c.executescript("""
+        CREATE TABLE presets_global (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            settings TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO presets_global (id, name, settings, created_at, updated_at)
+            SELECT id, name, settings, created_at, updated_at FROM presets;
+        DROP TABLE presets;
+        ALTER TABLE presets_global RENAME TO presets;
+    """)
 
 
 def rows(sql: str, params=()) -> list[dict]:
@@ -163,18 +182,25 @@ def delete_account(account_id: int) -> None:
 
 
 # --- presets --------------------------------------------------------------
-def list_presets(account_id: int) -> list[dict]:
-    return rows("SELECT * FROM presets WHERE account_id = ? ORDER BY name COLLATE NOCASE", (account_id,))
+def list_presets() -> list[dict]:
+    """All presets with the accounts that use them for renders."""
+    out = rows("SELECT * FROM presets ORDER BY name COLLATE NOCASE")
+    users: dict[int, list[dict]] = {}
+    for a in rows("SELECT id, name, preset_id FROM accounts WHERE preset_id IS NOT NULL ORDER BY name"):
+        users.setdefault(a["preset_id"], []).append({"id": a["id"], "name": a["name"]})
+    for p in out:
+        p["used_by"] = users.get(p["id"], [])
+    return out
 
 
 def get_preset(preset_id: int) -> dict | None:
     return row("SELECT * FROM presets WHERE id = ?", (preset_id,))
 
 
-def create_preset(account_id: int, name: str, settings_json: str) -> int:
+def create_preset(name: str, settings_json: str) -> int:
     ts = now_iso()
-    return execute("INSERT INTO presets (account_id, name, settings, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
-                   (account_id, name, settings_json, ts, ts))
+    return execute("INSERT INTO presets (name, settings, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                   (name, settings_json, ts, ts))
 
 
 def update_preset(preset_id: int, name: str, settings_json: str) -> None:

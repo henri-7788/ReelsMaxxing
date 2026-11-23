@@ -181,6 +181,20 @@ export default function AccountPage() {
     }
   }
 
+  // Old per-account switch: the title is now switched in the preset, this only turns the old switch back on
+  async function enableHook() {
+    if (!account) return
+    try {
+      const res = await api<Account>(`/accounts/${account.id}`, { method: "PUT", body: accountBody(account, { hook_enabled: true }) })
+      setAccount(res)
+      setForm((f) => ({ ...f, hook_enabled: true }))
+      setSaved((f) => ({ ...f, hook_enabled: true }))
+      toast("Titel wieder eingeschaltet")
+    } catch (e) {
+      toast((e as Error).message, "error")
+    }
+  }
+
   async function preview() {
     if (!id) return
     try {
@@ -282,7 +296,7 @@ export default function AccountPage() {
   )
   const content = (
     <Panel title="Inhalt">
-      <Switch checked={form.hook_enabled} onChange={(v) => set("hook_enabled", v)}>Titel als Hook-Text oben im Video</Switch>
+      {account && <p className="hint">Titel und Quellenangabe im Video stellst du im Tab <Link href={`/account?id=${account.id}&tab=editor`} className="link">Editor</Link> ein.</p>}
       <label className="label">
         Caption-Vorlage
         <textarea className="field min-h-36 font-mono !text-[13px]" rows={6} value={form.caption_template} onChange={(e) => set("caption_template", e.target.value)} />
@@ -369,7 +383,12 @@ export default function AccountPage() {
       {tab === "editor" && (
         <PresetEditor account={{ ...account, hook_enabled: form.hook_enabled }} presets={presets}
           sample={posts[0] ? { title: posts[0].title, author: posts[0].author, subreddit: posts[0].subreddit } : undefined}
-          onChange={(r) => { setPresets(r.presets); setAccount((a) => (a ? { ...a, preset_id: r.account.preset_id } : a)) }} />
+          onChange={(r) => {
+            setPresets(r.presets)
+            const next = r.account?.preset_id ?? (r.presets.some((p) => p.id === account.preset_id) ? account.preset_id : null)
+            setAccount((a) => (a ? { ...a, preset_id: next } : a))
+          }}
+          onEnableHook={enableHook} />
       )}
 
       {tab === "schedule" && (
