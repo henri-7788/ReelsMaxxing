@@ -532,6 +532,45 @@ def ui_preview(account_id: int):
     return {"started": True}
 
 
+class RunBody(BaseModel):
+    mode: str = "full"  # "full": Reddit -> render -> Instagram, "post": post the newest rendered video
+
+
+def _run_info(account_id: int) -> dict:
+    nxt = pipeline.latest_unposted(account_id)
+    return {**pipeline.run_state(account_id),
+            "postable": {k: nxt[k] for k in ("id", "title", "subreddit", "status", "created_at")} if nxt else None}
+
+
+@ui.get("/accounts/{account_id}/run")
+def ui_run_state(account_id: int):
+    _account_or_404(account_id)
+    return _run_info(account_id)
+
+
+@ui.post("/accounts/{account_id}/run")
+def ui_run(account_id: int, body: RunBody):
+    """Start button: run the whole workflow now, outside the schedule. Progress shows in the queue."""
+    acc = _account_or_404(account_id)
+    if body.mode not in {"full", "post"}:
+        raise HTTPException(400, "mode muss full oder post sein")
+    if not acc["ig_user_id"] or not acc["access_token"]:
+        raise HTTPException(400, "Account ist nicht mit Instagram verbunden")
+    post_id = None
+    if body.mode == "full":
+        if not db.list_sources(account_id):
+            raise HTTPException(400, "Der Account hat noch keine Subreddits")
+    else:
+        post = pipeline.latest_unposted(account_id)
+        if not post:
+            raise HTTPException(400, "Kein fertig gerendertes Video zum Posten vorhanden")
+        post_id = post["id"]
+    if not pipeline.claim_run(account_id):
+        raise HTTPException(409, "Für diesen Account läuft schon ein manueller Durchlauf")
+    threading.Thread(target=pipeline.manual_run, args=(account_id, body.mode, post_id), daemon=True).start()
+    return {"started": True, "mode": body.mode, "post_id": post_id}
+
+
 app.include_router(ui)
 
 

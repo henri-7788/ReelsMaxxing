@@ -253,3 +253,41 @@ def refresh_avatar(account: dict, client: httpx.Client | None = None, force: boo
 def delete_avatar(account_id: int) -> None:
     avatar_path(account_id).unlink(missing_ok=True)
     _avatar_failed.pop(account_id, None)
+
+
+# ------------------------------------------------------------------ publishing
+# Used by the manual "Start" run in the UI. Scheduled posts still go through n8n with the same three calls.
+PUBLISH_POLL_SECONDS = 10
+PUBLISH_TIMEOUT_SECONDS = 15 * 60
+
+
+def publish_reel(ig_user_id: str, token: str, video_url: str, caption: str,
+                 client: httpx.Client | None = None, sleep=time.sleep) -> str:
+    """Create a REELS container, wait until Instagram has fetched and processed the video, publish it.
+
+    Returns the Instagram media id. Raises InstagramError on any API error or when processing times out.
+    """
+    base = graph_api_base()
+    c = client or httpx.Client(timeout=60, follow_redirects=True)
+    try:
+        container = _check(c.post(f"{base}/{ig_user_id}/media", data={
+            "media_type": "REELS", "video_url": video_url, "caption": caption,
+            "share_to_feed": "true", "access_token": token,
+        }))["id"]
+        waited = 0
+        while True:
+            st = _check(c.get(f"{base}/{container}", params={"fields": "status_code,status", "access_token": token}))
+            code = st.get("status_code")
+            if code == "FINISHED":
+                break
+            if code in {"ERROR", "EXPIRED"}:
+                raise InstagramError(f"Instagram konnte das Video nicht verarbeiten: {st.get('status') or code}")
+            if waited >= PUBLISH_TIMEOUT_SECONDS:
+                raise InstagramError("Instagram hat das Video nicht rechtzeitig verarbeitet (Zeitüberschreitung)")
+            sleep(PUBLISH_POLL_SECONDS)
+            waited += PUBLISH_POLL_SECONDS
+        return str(_check(c.post(f"{base}/{ig_user_id}/media_publish",
+                                 data={"creation_id": container, "access_token": token}))["id"])
+    finally:
+        if client is None:
+            c.close()
