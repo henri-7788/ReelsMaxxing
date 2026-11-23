@@ -10,6 +10,7 @@ import logging
 import re
 import subprocess
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from . import presets
@@ -52,7 +53,8 @@ def build_filter(hook_file: Path | None, credit_file: Path, vaapi: bool, style: 
 def build_command(video: Path, audio: Path | None, out: Path, hook_file: Path | None,
                   credit_file: Path, encoder: str, max_seconds: int = 90, style: dict | None = None) -> list[str]:
     vaapi = encoder == "vaapi"
-    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y"]
+    # -progress: key=value blocks on stdout (out_time_us=...) that render() turns into a percentage
+    cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1", "-y"]
     if vaapi:
         cmd += ["-vaapi_device", "/dev/dri/renderD128"]
     cmd += ["-i", str(video)]
@@ -74,8 +76,55 @@ def build_command(video: Path, audio: Path | None, out: Path, hook_file: Path | 
     return cmd
 
 
+ProgressFn = Callable[[str, float | None], None]
+
+
+def media_duration(path: Path) -> float | None:
+    """Container duration in seconds (ffprobe), None if unknown."""
+    proc = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+                          capture_output=True, text=True)
+    try:
+        d = float(proc.stdout.strip())
+    except ValueError:
+        return None
+    return d if d > 0 else None
+
+
+def parse_progress_line(line: str) -> float | None:
+    """Seconds already encoded from one `-progress` line (out_time_us / out_time_ms are both microseconds)."""
+    key, _, value = line.strip().partition("=")
+    if key in ("out_time_us", "out_time_ms"):
+        try:
+            us = int(value)
+        except ValueError:  # "N/A" at the very start
+            return None
+        return max(0, us) / 1_000_000
+    return None
+
+
+def _run_ffmpeg(cmd: list[str], total: float | None, log_file: Path, on_progress: ProgressFn | None) -> int:
+    """Run ffmpeg, report percent from its progress output. stderr goes to a file so the pipe never blocks."""
+    with open(log_file, "w", encoding="utf-8", errors="replace") as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True, bufsize=1)
+        last = -1.0
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            if on_progress is None:
+                continue
+            secs = parse_progress_line(line)
+            if secs is not None and total:
+                pct = min(99.0, secs / total * 100)  # 100 only once the file is complete
+                if pct - last >= 0.5:
+                    last = pct
+                    on_progress("render", pct)
+            elif line.startswith("progress=") and not total:
+                on_progress("render", None)
+        return proc.wait()
+
+
 def render(video: Path, audio: Path | None, out: Path, hook: str | None, credit: str,
-           work_dir: Path, max_seconds: int = 90, style: dict | None = None) -> Path:
+           work_dir: Path, max_seconds: int = 90, style: dict | None = None,
+           on_progress: ProgressFn | None = None) -> Path:
     work_dir.mkdir(parents=True, exist_ok=True)
     hook_file = None
     if hook:
@@ -83,17 +132,30 @@ def render(video: Path, audio: Path | None, out: Path, hook: str | None, credit:
         hook_file.write_text(hook, encoding="utf-8")
     credit_file = work_dir / "credit.txt"
     credit_file.write_text(credit, encoding="utf-8")
+    duration = media_duration(video)
+    total = min(duration, max_seconds) if duration else None
+    log_file = work_dir / "ffmpeg.log"
 
     encoders = [settings.encoder] + (["libx264"] if settings.encoder != "libx264" else [])
     last_err = ""
-    with _render_lock:
+    if not _render_lock.acquire(blocking=False):
+        if on_progress:
+            on_progress("waiting", None)  # another reel is encoding right now
+        _render_lock.acquire()
+    try:
         for enc in encoders:
+            if on_progress:
+                on_progress("render", 0.0 if total else None)
             cmd = build_command(video, audio, out, hook_file, credit_file, enc, max_seconds, style)
-            proc = subprocess.run(cmd, capture_output=True, text=True)
-            if proc.returncode == 0 and out.exists() and out.stat().st_size > 0:
+            code = _run_ffmpeg(cmd, total, log_file, on_progress)
+            if code == 0 and out.exists() and out.stat().st_size > 0:
+                if on_progress:
+                    on_progress("render", 100.0)
                 return out
-            last_err = proc.stderr[-800:]
+            last_err = log_file.read_text(encoding="utf-8", errors="replace")[-800:]
             log.warning("Encoder %s fehlgeschlagen: %s", enc, last_err)
+    finally:
+        _render_lock.release()
     raise RenderError(f"ffmpeg fehlgeschlagen: {last_err}")
 
 

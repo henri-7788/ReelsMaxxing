@@ -53,3 +53,22 @@ def test_build_filter_uses_preset_positions(tmp_path):
     assert "x=54:y=240" in f
     default = render.build_filter(None, tmp_path / "c.txt", False)
     assert "x=54:y=h-text_h-480" in default
+
+
+def test_parse_progress_line():
+    assert render.parse_progress_line("out_time_us=2500000\n") == 2.5
+    assert render.parse_progress_line("out_time_ms=1000000") == 1.0
+    assert render.parse_progress_line("out_time_us=N/A") is None
+    assert render.parse_progress_line("frame=12") is None
+
+
+def test_render_reports_progress(tmp_path):
+    src = tmp_path / "v.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=360x640:rate=25",
+                    "-t", "4", "-c:v", "libx264", "-preset", "ultrafast", str(src)], check=True)
+    seen = []
+    render.render(src, None, tmp_path / "out.mp4", None, "c", tmp_path / "w",
+                  on_progress=lambda stage, pct: seen.append((stage, pct)))
+    pcts = [p for s, p in seen if s == "render" and p is not None]
+    assert pcts[0] == 0.0 and pcts[-1] == 100.0
+    assert pcts == sorted(pcts)

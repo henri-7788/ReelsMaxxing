@@ -15,7 +15,7 @@ const PAGE = 25
 export default function QueuePage() {
   const params = useSearchParams()
   const router = useRouter()
-  const { posts, allPosts, account, loading, overview, error, reload } = useData()
+  const { posts, allPosts, account, loading, overview, error, reload, live } = useData()
   const mobile = useIsMobile()
   const drawer = usePostDrawer()
   const view: View = params.get("view") === "history" ? "history" : "pipeline"
@@ -58,6 +58,10 @@ export default function QueuePage() {
       <div className="flex flex-wrap items-center gap-3">
         <Segmented<View> label="Ansicht" value={view} onChange={(v) => router.replace(v === "history" ? "/queue?view=history" : "/queue", { scroll: false })} options={[{ value: "pipeline", label: "Pipeline" }, { value: "history", label: "Verlauf" }]} />
         <span className="caption">{account ? `Account: ${account.name}` : "Alle Accounts"} · {posts.length} Videos</span>
+        <span className="caption ml-auto flex items-center gap-2" title={live ? "Änderungen erscheinen sofort" : "Keine Live-Verbindung, Aktualisierung alle 30 s"}>
+          <span className={`live-dot ${live ? "" : "off"}`} aria-hidden="true" />
+          {live ? "Live" : "Offline"}
+        </span>
       </div>
 
       {view === "pipeline" && (
