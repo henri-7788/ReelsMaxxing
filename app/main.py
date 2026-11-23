@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, instagram, pipeline, presets, scheduler, stats, system
+from . import db, instagram, pipeline, presets, reddit, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -244,6 +244,10 @@ def _public_account(a: dict) -> dict:
     out["active"] = bool(a["active"])
     out["hook_enabled"] = bool(a["hook_enabled"])
     out["next_slot"] = scheduler.next_slot(a) if a["active"] else None
+    # Profile picture: cached file, or fetchable because the account is connected. The UI falls back to the letter.
+    version = instagram.avatar_version(a["id"])
+    out["avatar_url"] = (f"/ui-api/accounts/{a['id']}/avatar?v={version or 0}"
+                         if version or (out["has_token"] and a.get("ig_user_id")) else None)
     return out
 
 
@@ -293,6 +297,27 @@ def ui_instagram_disconnect(account_id: int):
     _account_or_404(account_id)
     instagram.clear_token(account_id)
     return _public_account(db.get_account(account_id))
+
+
+@ui.get("/accounts/{account_id}/avatar")
+def ui_account_avatar(account_id: int):
+    """Instagram profile picture from the local cache (downloaded again when older than a day)."""
+    path = instagram.refresh_avatar(_account_or_404(account_id))
+    if not path:
+        raise HTTPException(404, "Kein Profilbild")
+    head = path.read_bytes()[:12]
+    media_type = "image/png" if head.startswith(b"\x89PNG") else "image/webp" if head[8:12] == b"WEBP" else "image/jpeg"
+    return FileResponse(path, media_type=media_type, headers={"Cache-Control": "private, max-age=3600"})
+
+
+@ui.get("/reddit/subreddits")
+def ui_subreddit_search(q: str = "", nsfw: bool = True):
+    """Subreddit suggestions while typing in the add-source form."""
+    try:
+        return {"subreddits": reddit.search_subreddits(q, include_nsfw=nsfw)}
+    except (RedditError, httpx.HTTPError) as e:
+        log.info("Subreddit-Suche fehlgeschlagen: %s", e)
+        raise HTTPException(502, "Reddit-Suche gerade nicht erreichbar")
 
 
 @ui.get("/settings")
@@ -374,6 +399,7 @@ def ui_account_update(account_id: int, body: AccountBody):
 @ui.delete("/accounts/{account_id}")
 def ui_account_delete(account_id: int):
     db.delete_account(account_id)
+    instagram.delete_avatar(account_id)
     return {"ok": True}
 
 

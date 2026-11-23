@@ -136,15 +136,35 @@ export function Switch({ checked, onChange, children, label }: { checked: boolea
   )
 }
 
-export function AccountAvatar({ account, size = 32 }: { account: Pick<Account, "id" | "name"> | null; size?: number }) {
+export function AccountAvatar({ account, size = 32 }: { account: (Pick<Account, "id" | "name"> & { avatar_url?: string | null }) | null; size?: number }) {
   const color = account ? accountColor(account.id) : "var(--primary-600)"
+  const src = account?.avatar_url ?? null
+  const [failed, setFailed] = useState<string | null>(null)
+  const showImage = !!src && failed !== src
   return (
     <span
-      className="flex flex-none items-center justify-center rounded-full bg-surface font-semibold text-ink"
+      className="relative flex flex-none items-center justify-center overflow-hidden rounded-full bg-surface font-semibold text-ink"
       style={{ width: size, height: size, boxShadow: `inset 0 0 0 2px ${color}`, fontSize: Math.round(size * 0.4) }}
       aria-hidden="true"
     >
-      {account ? account.name.trim().charAt(0).toUpperCase() || "?" : "∑"}
+      {showImage ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src}
+          alt=""
+          width={size}
+          height={size}
+          loading="lazy"
+          decoding="async"
+          className="size-full rounded-full object-cover"
+          style={{ padding: 2 }}
+          onError={() => setFailed(src)}
+        />
+      ) : account ? (
+        account.name.trim().charAt(0).toUpperCase() || "?"
+      ) : (
+        "∑"
+      )}
     </span>
   )
 }

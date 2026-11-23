@@ -25,6 +25,7 @@ export type Account = {
   hook_enabled: boolean
   preset_id: number | null
   next_slot: string | null
+  avatar_url: string | null
   created_at: string
   sources?: Source[]
 }
@@ -81,6 +82,8 @@ export async function api<T>(path: string, init?: { method?: string; body?: unkn
   }
   return res.json() as Promise<T>
 }
+
+export type SubredditHit = { name: string; title: string; subscribers: number; over18: boolean; icon: string }
 
 export type Stats = {
   days: number

@@ -3,6 +3,7 @@
 import { ChevronDown, Plus, Rss, TriangleAlert } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { Card, CardHeader, EmptyState, Menu, Switch } from "@/components/ui/kit"
+import { SubredditInput } from "@/components/SubredditInput"
 import { useToast } from "@/components/ui/Toast"
 import { api, relTime, type Source, type Stats } from "@/lib/api"
 
@@ -88,10 +89,10 @@ export function Sources({ accountId, sources, stats, onChange }: { accountId: nu
         </button>
         {open && (
           <form onSubmit={add} className="mt-4 flex flex-col gap-3">
-            <label className="label">
-              Name
-              <input className="field" required value={sub} onChange={(e) => setSub(e.target.value.replace(/^\/?r\//, ""))} placeholder="z. B. aww" />
-            </label>
+            <div className="label">
+              <label htmlFor={`sub-name-${accountId}`}>Name</label>
+              <SubredditInput id={`sub-name-${accountId}`} value={sub} onChange={setSub} nsfw={nsfw} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <label className="label">
                 Sortierung

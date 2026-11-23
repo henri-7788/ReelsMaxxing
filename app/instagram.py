@@ -124,8 +124,16 @@ def connect(account_id: int | None, code: str, client: httpx.Client | None = Non
     linked elsewhere; Instagram accounts without a match become new (paused) accounts.
     Returns the ids of all touched accounts, the started-from account first.
     """
-    with client or httpx.Client(timeout=30) as c:
-        res = exchange_code(code, c)
+    with client or httpx.Client(timeout=30, follow_redirects=True) as c:
+        touched = _store_connection(account_id, exchange_code(code, c))
+        for aid in touched:
+            acc = db.get_account(aid)
+            if acc:
+                refresh_avatar(acc, client=c, force=True)
+    return touched
+
+
+def _store_connection(account_id: int | None, res: dict) -> list[int]:
     common = {"access_token": res["access_token"], "token_expires_at": res["token_expires_at"],
               "client_business_id": res["client_business_id"], "token_refreshed_at": db.now_iso()}
     if account_id is not None and not db.get_account(account_id):
@@ -180,3 +188,68 @@ def disconnect(data: dict) -> int:
 
 def clear_token(account_id: int) -> None:
     db.save_account({"access_token": "", "token_expires_at": "", "token_refreshed_at": ""}, account_id)
+    delete_avatar(account_id)
+
+
+# ------------------------------------------------------- profile pictures
+# Instagram CDN URLs expire, so the picture is downloaded and kept under DATA_DIR/avatars.
+AVATAR_MAX_AGE = 24 * 3600
+AVATAR_RETRY_AFTER = 3600
+AVATAR_MAX_BYTES = 5 * 1024 * 1024
+_avatar_failed: dict[int, float] = {}
+
+
+def avatar_path(account_id: int):
+    return settings.data_dir / "avatars" / f"{account_id}.jpg"
+
+
+def avatar_version(account_id: int) -> int | None:
+    """mtime of the cached picture (for cache busting in the UI), None if there is none."""
+    p = avatar_path(account_id)
+    return int(p.stat().st_mtime) if p.is_file() else None
+
+
+def refresh_avatar(account: dict, client: httpx.Client | None = None, force: bool = False):
+    """Download the profile picture if it is missing or older than a day. Returns the file path or None.
+    Failures are logged and retried at most once per hour; an old picture is kept in that case."""
+    path = avatar_path(account["id"])
+    fresh = path.is_file() and time.time() - path.stat().st_mtime < AVATAR_MAX_AGE
+    if fresh and not force:
+        return path
+    if not account.get("ig_user_id") or not account.get("access_token"):
+        return path if path.is_file() else None
+    if not force and time.time() - _avatar_failed.get(account["id"], 0) < AVATAR_RETRY_AFTER:
+        return path if path.is_file() else None
+    try:
+        c = client or httpx.Client(timeout=15, follow_redirects=True)
+        try:
+            data = _check(c.get(f"{graph_api_base()}/{account['ig_user_id']}",
+                                params={"fields": "profile_picture_url", "access_token": account["access_token"]}))
+            url = data.get("profile_picture_url")
+            if not url:
+                raise InstagramError("kein Profilbild")
+            r = c.get(url)
+            r.raise_for_status()
+            if not r.headers.get("content-type", "image/").startswith("image/") or len(r.content) > AVATAR_MAX_BYTES:
+                raise InstagramError("Profilbild hat ein unerwartetes Format")
+        finally:
+            if client is None:
+                c.close()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_bytes(r.content)
+        tmp.replace(path)
+        _avatar_failed.pop(account["id"], None)
+        return path
+    except (InstagramError, httpx.HTTPError) as e:
+        log.info("Profilbild für Account %s nicht geladen: %s", account["id"], e)
+        _avatar_failed[account["id"]] = time.time()
+        if path.is_file():
+            path.touch()  # keep the old picture another day instead of retrying on every page view
+            return path
+        return None
+
+
+def delete_avatar(account_id: int) -> None:
+    avatar_path(account_id).unlink(missing_ok=True)
+    _avatar_failed.pop(account_id, None)
