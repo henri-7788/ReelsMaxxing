@@ -85,8 +85,8 @@ function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, 
             <input className="field tabular" type="number" min={hours} max={168} step={0.5} value={max} onChange={(e) => onMax(+e.target.value)} />
           </label>
         )}
-        <label className="label w-36">
-          {random ? "Erster Post um" : "Beginnend um"}
+        <label className={`label ${random ? "w-52" : "w-36"}`}>
+          {random ? "Erster Workflow-Durchlauf" : "Beginnend um"}
           <input className="field tabular" type="time" value={start} onChange={(e) => onStart(e.target.value)} />
         </label>
       </div>
@@ -97,7 +97,7 @@ function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, 
               : upcoming.length === 0 ? <span className="caption">Keine Zeiten in den nächsten Tagen.</span>
               : upcoming.slice(0, 8).map((t) => <span key={t} className="tag tabular">{formatSlot(t)}</span>)}
           </div>
-          <p className="hint">Nach jedem Post kommt der nächste irgendwann {fmt(hours)} bis {fmt(max)} Stunden später. Die Zeitpunkte werden schon Tage im Voraus festgelegt, damit das Rendern früh eingeplant wird; im Kalender und im Render-Plan siehst du sie.</p>
+          <p className="hint">Der erste Workflow-Durchlauf postet zu dieser Uhrzeit (gerendert wird vorher). Danach kommt der nächste irgendwann {fmt(hours)} bis {fmt(max)} Stunden später. Die Zeitpunkte werden schon Tage im Voraus festgelegt, damit das Rendern früh eingeplant wird; im Kalender und im Render-Plan siehst du sie.</p>
         </>
       ) : (
         <>
