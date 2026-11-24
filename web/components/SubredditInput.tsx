@@ -19,7 +19,8 @@ export function SubredditInput({ id, value, onChange, nsfw }: { id?: string; val
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
   // Skip the search right after picking a suggestion (value changes, but the user is done)
-  const picked = useRef<string | null>(null)
+  // (also the initial value when editing an existing source: no suggestion list on open)
+  const picked = useRef<string | null>(value.trim() || null)
   const wrap = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

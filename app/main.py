@@ -516,19 +516,32 @@ def ui_account_delete(account_id: int):
     return {"ok": True}
 
 
-@ui.post("/accounts/{account_id}/sources")
-def ui_source_add(account_id: int, body: SourceBody):
-    _account_or_404(account_id)
+def _source_values(body: SourceBody) -> dict:
     sub = body.subreddit.strip().removeprefix("r/").strip("/ ")
     if not sub:
         raise HTTPException(400, "Subreddit fehlt")
-    db.add_source(account_id, {
+    return {
         "subreddit": sub, "sort": body.sort if body.sort in SORTS else "top",
         "time_filter": body.time_filter if body.time_filter in TIME_FILTERS else "day",
         "min_score": max(0, body.min_score), "min_duration": max(0, body.min_duration),
         "max_duration": min(max(1, body.max_duration), 900), "allow_nsfw": int(body.allow_nsfw),
-    })
+    }
+
+
+@ui.post("/accounts/{account_id}/sources")
+def ui_source_add(account_id: int, body: SourceBody):
+    _account_or_404(account_id)
+    db.add_source(account_id, _source_values(body))
     return {"sources": db.list_sources(account_id)}
+
+
+@ui.put("/sources/{source_id}")
+def ui_source_update(source_id: int, body: SourceBody):
+    src = db.get_source(source_id)
+    if not src:
+        raise HTTPException(404, "Quelle nicht gefunden")
+    db.update_source(source_id, _source_values(body))
+    return {"sources": db.list_sources(src["account_id"])}
 
 
 @ui.delete("/sources/{source_id}")

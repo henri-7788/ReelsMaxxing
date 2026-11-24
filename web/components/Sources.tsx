@@ -14,34 +14,86 @@ export function sourceSummary(s: Source) {
   return `${SORT_LABEL[s.sort] ?? s.sort}${s.sort === "top" ? ` / ${TIME_LABEL[s.time_filter] ?? s.time_filter}` : ""} · ≥ ${s.min_score} ▲ · ${s.min_duration}–${s.max_duration} s · NSFW ${s.allow_nsfw ? "an" : "aus"}`
 }
 
+type SourceDraft = Pick<Source, "subreddit" | "sort" | "time_filter" | "min_score" | "min_duration" | "max_duration"> & { allow_nsfw: boolean }
+
+const NEW_SOURCE: SourceDraft = { subreddit: "", sort: "top", time_filter: "day", min_score: 500, min_duration: 5, max_duration: 90, allow_nsfw: false }
+
+/** Name (with live Reddit search) plus filters; used for adding and for editing a source. */
+function SourceForm({ id, initial, submitLabel, busyLabel, onSubmit, onCancel }: {
+  id: string
+  initial: SourceDraft
+  submitLabel: string
+  busyLabel: string
+  onSubmit: (d: SourceDraft) => Promise<boolean>
+  onCancel?: () => void
+}) {
+  const [d, setD] = useState<SourceDraft>(initial)
+  const [busy, setBusy] = useState(false)
+  const set = <K extends keyof SourceDraft>(k: K, v: SourceDraft[K]) => setD((x) => ({ ...x, [k]: v }))
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      if (await onSubmit(d)) setD((x) => (onCancel ? x : { ...x, subreddit: "" }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-3">
+      <div className="label">
+        <label htmlFor={id}>Name</label>
+        <SubredditInput id={id} value={d.subreddit} onChange={(v) => set("subreddit", v)} nsfw={d.allow_nsfw} />
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="label">
+          Sortierung
+          <select className="field" value={d.sort} onChange={(e) => set("sort", e.target.value)}>
+            {Object.entries(SORT_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+        <label className="label">
+          Zeitraum
+          <select className="field" value={d.time_filter} onChange={(e) => set("time_filter", e.target.value)} disabled={d.sort !== "top"}>
+            {Object.entries(TIME_LABEL).filter(([v]) => v !== "hour" || d.time_filter === "hour").map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+        </label>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
+        <label className="label">Min. ▲<input className="field" type="number" min={0} value={d.min_score} onChange={(e) => set("min_score", +e.target.value)} /></label>
+        <label className="label">Min. s<input className="field" type="number" min={0} value={d.min_duration} onChange={(e) => set("min_duration", +e.target.value)} /></label>
+        <label className="label">Max. s<input className="field" type="number" min={1} max={900} value={d.max_duration} onChange={(e) => set("max_duration", +e.target.value)} /></label>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Switch checked={d.allow_nsfw} onChange={(v) => set("allow_nsfw", v)}>NSFW erlauben</Switch>
+        <div className="flex gap-2">
+          {onCancel && <button type="button" className="btn btn-ghost" onClick={onCancel} disabled={busy}>Abbrechen</button>}
+          <button type="submit" className="btn btn-primary" disabled={busy || !d.subreddit.trim()}>{busy ? busyLabel : submitLabel}</button>
+        </div>
+      </div>
+    </form>
+  )
+}
+
 /** Subreddits of one account with their filters and hit counts (UIDesign.md 6.15). */
 export function Sources({ accountId, sources, stats, onChange }: { accountId: number; sources: Source[]; stats?: Stats["sources"]; onChange: (s: Source[]) => void }) {
   const toast = useToast()
   const [open, setOpen] = useState(sources.length === 0)
-  const [sub, setSub] = useState("")
-  const [sort, setSort] = useState("top")
-  const [timeFilter, setTimeFilter] = useState("day")
-  const [minScore, setMinScore] = useState(500)
-  const [minDur, setMinDur] = useState(5)
-  const [maxDur, setMaxDur] = useState(90)
-  const [nsfw, setNsfw] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState<number | null>(null)
 
-  async function add(e: FormEvent) {
-    e.preventDefault()
-    setBusy(true)
+  async function save(d: SourceDraft, src?: Source) {
     try {
-      const d = await api<{ sources: Source[] }>(`/accounts/${accountId}/sources`, {
-        method: "POST",
-        body: { subreddit: sub, sort, time_filter: timeFilter, min_score: minScore, min_duration: minDur, max_duration: maxDur, allow_nsfw: nsfw },
-      })
-      onChange(d.sources)
-      toast(`r/${sub.replace(/^r\//, "")} hinzugefügt`)
-      setSub("")
+      const res = await api<{ sources: Source[] }>(src ? `/sources/${src.id}` : `/accounts/${accountId}/sources`, { method: src ? "PUT" : "POST", body: d })
+      onChange(res.sources)
+      const name = `r/${d.subreddit.trim().replace(/^r\//, "").replace(/\/+$/, "")}`
+      toast(src ? `${name} gespeichert` : `${name} hinzugefügt`)
+      if (src) setEditing(null)
+      return true
     } catch (e) {
       toast((e as Error).message, "error")
-    } finally {
-      setBusy(false)
+      return false
     }
   }
 
@@ -63,6 +115,21 @@ export function Sources({ accountId, sources, stats, onChange }: { accountId: nu
       ) : (
         <ul className="-mt-2 flex flex-col divide-y divide-line">
           {sources.map((s) => {
+            if (editing === s.id) {
+              return (
+                <li key={s.id} className="py-3">
+                  <div className="mb-3 font-semibold text-ink">r/{s.subreddit} bearbeiten</div>
+                  <SourceForm
+                    id={`sub-edit-${s.id}`}
+                    initial={{ ...s, allow_nsfw: !!s.allow_nsfw }}
+                    submitLabel="Speichern"
+                    busyLabel="Speichert…"
+                    onSubmit={(d) => save(d, s)}
+                    onCancel={() => setEditing(null)}
+                  />
+                </li>
+              )
+            }
             const st = stats?.find((x) => x.subreddit.toLowerCase() === s.subreddit.toLowerCase())
             return (
               <li key={s.id} className="flex items-start gap-3 py-3">
@@ -75,7 +142,11 @@ export function Sources({ accountId, sources, stats, onChange }: { accountId: nu
                     )}
                   </div>
                 </div>
-                <Menu label={`Aktionen für r/${s.subreddit}`} items={[{ label: "Auf Reddit öffnen", href: `https://reddit.com/r/${s.subreddit}` }, { label: "Entfernen", danger: true, onSelect: () => remove(s) }]} />
+                <Menu label={`Aktionen für r/${s.subreddit}`} items={[
+                  { label: "Bearbeiten", onSelect: () => setEditing(s.id) },
+                  { label: "Auf Reddit öffnen", href: `https://reddit.com/r/${s.subreddit}` },
+                  { label: "Entfernen", danger: true, onSelect: () => remove(s) },
+                ]} />
               </li>
             )
           })}
@@ -88,35 +159,9 @@ export function Sources({ accountId, sources, stats, onChange }: { accountId: nu
           <ChevronDown size={16} className={`transition-transform duration-200 ${open ? "rotate-180" : ""}`} />
         </button>
         {open && (
-          <form onSubmit={add} className="mt-4 flex flex-col gap-3">
-            <div className="label">
-              <label htmlFor={`sub-name-${accountId}`}>Name</label>
-              <SubredditInput id={`sub-name-${accountId}`} value={sub} onChange={setSub} nsfw={nsfw} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="label">
-                Sortierung
-                <select className="field" value={sort} onChange={(e) => setSort(e.target.value)}>
-                  {Object.entries(SORT_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </label>
-              <label className="label">
-                Zeitraum
-                <select className="field" value={timeFilter} onChange={(e) => setTimeFilter(e.target.value)} disabled={sort !== "top"}>
-                  {Object.entries(TIME_LABEL).filter(([v]) => v !== "hour").map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>
-              </label>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <label className="label">Min. ▲<input className="field" type="number" min={0} value={minScore} onChange={(e) => setMinScore(+e.target.value)} /></label>
-              <label className="label">Min. s<input className="field" type="number" min={0} value={minDur} onChange={(e) => setMinDur(+e.target.value)} /></label>
-              <label className="label">Max. s<input className="field" type="number" min={1} max={900} value={maxDur} onChange={(e) => setMaxDur(+e.target.value)} /></label>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <Switch checked={nsfw} onChange={setNsfw}>NSFW erlauben</Switch>
-              <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? "Fügt hinzu…" : "Hinzufügen"}</button>
-            </div>
-          </form>
+          <div className="mt-4">
+            <SourceForm id={`sub-name-${accountId}`} initial={NEW_SOURCE} submitLabel="Hinzufügen" busyLabel="Fügt hinzu…" onSubmit={(d) => save(d)} />
+          </div>
         )}
       </div>
     </Card>

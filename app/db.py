@@ -259,6 +259,16 @@ def add_source(account_id: int, data: dict) -> int:
                    [account_id, *values.values()])
 
 
+def get_source(source_id: int) -> dict | None:
+    return row("SELECT * FROM sources WHERE id = ?", (source_id,))
+
+
+def update_source(source_id: int, data: dict) -> None:
+    values = {k: data[k] for k in SOURCE_FIELDS if k in data}
+    if values:
+        execute(f"UPDATE sources SET {', '.join(f'{k} = ?' for k in values)} WHERE id = ?", [*values.values(), source_id])
+
+
 def delete_source(source_id: int) -> None:
     execute("DELETE FROM sources WHERE id = ?", (source_id,))
 

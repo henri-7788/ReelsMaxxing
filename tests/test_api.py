@@ -37,6 +37,12 @@ def test_ui_account_and_source_flow():
     bad = c.put(f"/ui-api/accounts/{aid}", json={"name": "x", "posting_times": "99:00", "caption_template": "x"})
     assert bad.status_code == 400 and "99:00" in bad.json()["detail"]
     sid = db.list_sources(aid)[0]["id"]
+    r = c.put(f"/ui-api/sources/{sid}", json={"subreddit": "r/cats", "sort": "hot", "min_score": 50, "allow_nsfw": True})
+    assert r.status_code == 200
+    src = r.json()["sources"][0]
+    assert (src["id"], src["subreddit"], src["sort"], src["min_score"], src["allow_nsfw"]) == (sid, "cats", "hot", 50, 1)
+    assert c.put(f"/ui-api/sources/{sid}", json={"subreddit": " "}).status_code == 400
+    assert c.put("/ui-api/sources/99999", json={"subreddit": "aww"}).status_code == 404
     assert c.delete(f"/ui-api/sources/{sid}").json() == {"ok": True}
     assert c.delete(f"/ui-api/accounts/{aid}").json() == {"ok": True}
     assert c.get(f"/ui-api/accounts/{aid}").status_code == 404
