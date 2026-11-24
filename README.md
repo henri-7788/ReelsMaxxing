@@ -118,6 +118,12 @@ Facebook-Seite ist nicht nötig, die App muss aber einem Business-Portfolio geh�
    einem neuen Tab, die Account-Seite wartet mit einem Lade-Overlay und aktualisiert sich danach. Werden beim Login mehrere
    Instagram-Konten freigegeben, bekommt jedes seinen Token; fehlende Accounts werden pausiert angelegt.
 
+**Wie das Video zu Instagram kommt** (`INSTAGRAM_UPLOAD`): Standard `auto` gibt Instagram zuerst den
+Link `/media/...`. Lehnt Meta den Link ab (z. B. Fehler **2207077**, meist weil Cloudflare/Bot-Schutz
+vor `/media` den Abruf blockiert, oder 2207052), lädt der Container die Datei direkt per
+Resumable Upload zu `rupload.facebook.com` hoch. `upload` nutzt immer den Direkt-Upload (dann muss
+`/media` nicht öffentlich sein), `url` nie.
+
 Deauthorize und Data deletion ruft Meta direkt vom Server auf. Deshalb in Cloudflare Access
 (wie bei `/media`) eine Bypass-Application für `reels.deinedomain.de/api/instagram` anlegen.
 Die drei Endpunkte sind durch den signierten `state` bzw. Metas `signed_request` geschützt.

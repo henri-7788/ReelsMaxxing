@@ -261,33 +261,80 @@ PUBLISH_POLL_SECONDS = 10
 PUBLISH_TIMEOUT_SECONDS = 15 * 60
 
 
-def publish_reel(ig_user_id: str, token: str, video_url: str, caption: str,
-                 client: httpx.Client | None = None, sleep=time.sleep) -> str:
-    """Create a REELS container, wait until Instagram has fetched and processed the video, publish it.
+class ProcessingError(InstagramError):
+    """Instagram accepted the container but could not fetch or process the video (status ERROR/EXPIRED)."""
 
+
+def _wait_and_publish(c: httpx.Client, base: str, ig_user_id: str, token: str, container: str, sleep) -> str:
+    waited = 0
+    while True:
+        st = _check(c.get(f"{base}/{container}", params={"fields": "status_code,status", "access_token": token}))
+        code = st.get("status_code")
+        if code == "FINISHED":
+            break
+        if code in {"ERROR", "EXPIRED"}:
+            raise ProcessingError(f"Instagram konnte das Video nicht verarbeiten: {st.get('status') or code}")
+        if waited >= PUBLISH_TIMEOUT_SECONDS:
+            raise InstagramError("Instagram hat das Video nicht rechtzeitig verarbeitet (Zeitüberschreitung)")
+        sleep(PUBLISH_POLL_SECONDS)
+        waited += PUBLISH_POLL_SECONDS
+    return str(_check(c.post(f"{base}/{ig_user_id}/media_publish",
+                             data={"creation_id": container, "access_token": token}))["id"])
+
+
+def upload_url(container: str) -> str:
+    return f"https://rupload.facebook.com/ig-api-upload/{settings.meta_graph_version}/{container}"
+
+
+def _publish_from_url(c, base, ig_user_id, token, video_url, caption, sleep) -> str:
+    """Instagram downloads the video from our public /media URL."""
+    container = _check(c.post(f"{base}/{ig_user_id}/media", data={
+        "media_type": "REELS", "video_url": video_url, "caption": caption,
+        "share_to_feed": "true", "access_token": token,
+    }))["id"]
+    return _wait_and_publish(c, base, ig_user_id, token, container, sleep)
+
+
+def _publish_upload(c, base, ig_user_id, token, video_path, caption, sleep) -> str:
+    """Resumable upload: we send the file to Meta ourselves, no public URL needed."""
+    res = _check(c.post(f"{base}/{ig_user_id}/media", data={
+        "media_type": "REELS", "upload_type": "resumable", "caption": caption,
+        "share_to_feed": "true", "access_token": token,
+    }))
+    container = res["id"]
+    data = video_path.read_bytes()
+    _check(c.post(res.get("uri") or upload_url(container), content=data, timeout=600, headers={
+        "Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data)),
+        "Content-Type": "application/octet-stream",
+    }))
+    return _wait_and_publish(c, base, ig_user_id, token, container, sleep)
+
+
+def publish_reel(ig_user_id: str, token: str, video_url: str, caption: str,
+                 client: httpx.Client | None = None, sleep=time.sleep, video_path=None) -> str:
+    """Create a REELS container, wait until Instagram has processed the video, publish it.
+
+    INSTAGRAM_UPLOAD=auto (default): Instagram fetches video_url; if that fails (e.g. error 2207077,
+    Meta could not or would not load the link, often because of Cloudflare in front of /media), the
+    file at video_path is uploaded directly instead. "url" / "upload" force one way.
     Returns the Instagram media id. Raises InstagramError on any API error or when processing times out.
     """
     base = graph_api_base()
+    mode = settings.instagram_upload
     c = client or httpx.Client(timeout=60, follow_redirects=True)
     try:
-        container = _check(c.post(f"{base}/{ig_user_id}/media", data={
-            "media_type": "REELS", "video_url": video_url, "caption": caption,
-            "share_to_feed": "true", "access_token": token,
-        }))["id"]
-        waited = 0
-        while True:
-            st = _check(c.get(f"{base}/{container}", params={"fields": "status_code,status", "access_token": token}))
-            code = st.get("status_code")
-            if code == "FINISHED":
-                break
-            if code in {"ERROR", "EXPIRED"}:
-                raise InstagramError(f"Instagram konnte das Video nicht verarbeiten: {st.get('status') or code}")
-            if waited >= PUBLISH_TIMEOUT_SECONDS:
-                raise InstagramError("Instagram hat das Video nicht rechtzeitig verarbeitet (Zeitüberschreitung)")
-            sleep(PUBLISH_POLL_SECONDS)
-            waited += PUBLISH_POLL_SECONDS
-        return str(_check(c.post(f"{base}/{ig_user_id}/media_publish",
-                                 data={"creation_id": container, "access_token": token}))["id"])
+        if mode == "upload" and video_path:
+            return _publish_upload(c, base, ig_user_id, token, video_path, caption, sleep)
+        try:
+            return _publish_from_url(c, base, ig_user_id, token, video_url, caption, sleep)
+        except ProcessingError as e:
+            if mode == "url" or not video_path or not video_path.is_file():
+                raise
+            log.warning("Instagram konnte den Link nicht verarbeiten (%s), lade die Datei direkt hoch", e)
+            try:
+                return _publish_upload(c, base, ig_user_id, token, video_path, caption, sleep)
+            except InstagramError as e2:
+                raise InstagramError(f"{e} / Direkt-Upload: {e2}") from e2
     finally:
         if client is None:
             c.close()

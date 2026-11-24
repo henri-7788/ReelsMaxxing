@@ -39,6 +39,8 @@ class Settings:
     media_retention_hours: int = field(default_factory=lambda: int(os.getenv("MEDIA_RETENTION_HOURS", "48")))
     # How long after a planned posting time a slot is still considered due
     slot_window_minutes: int = field(default_factory=lambda: int(os.getenv("SLOT_WINDOW_MINUTES", "90")))
+    # How Instagram gets the video: auto (link first, direct upload if Meta refuses the link), url, upload
+    instagram_upload: str = field(default_factory=lambda: os.getenv("INSTAGRAM_UPLOAD", "auto").strip().lower())
     # Who runs the schedule: "internal" (built-in autopilot renders ahead and posts itself) or
     # "n8n" (old way: n8n polls /api/due, the autopilot stays off)
     automation: str = field(default_factory=lambda: os.getenv("AUTOMATION", "internal").strip().lower())
