@@ -119,3 +119,58 @@ def test_run_rejects_unconnected_and_double_start():
         assert c.post(f"/ui-api/accounts/{aid2}/run", json={"mode": "full"}).status_code == 409
     finally:
         pipeline._running.discard(aid2)
+
+
+def test_publish_reel_falls_back_to_direct_upload(tmp_path):
+    """Error 2207077: Meta refuses the link. The file is then uploaded directly (resumable upload)."""
+    video = tmp_path / "a.mp4"
+    video.write_bytes(b"x" * 1234)
+    calls = []
+
+    def handler(req: httpx.Request):
+        calls.append((req.method, req.url.host, req.url.path))
+        if req.url.path.endswith("/media"):
+            body = req.content.decode()
+            if "upload_type=resumable" in body:
+                return httpx.Response(200, json={"id": "C2", "uri": "https://rupload.facebook.com/ig-api-upload/v27.0/C2"})
+            return httpx.Response(200, json={"id": "C1"})
+        if req.url.host == "rupload.facebook.com":
+            assert req.headers["Authorization"] == "OAuth tok"
+            assert req.headers["file_size"] == "1234" and req.headers["offset"] == "0"
+            return httpx.Response(200, json={"success": True})
+        if req.url.path.endswith("/C1"):
+            return httpx.Response(200, json={"status_code": "ERROR", "status": "Error: Media upload has failed with error code 2207077"})
+        if req.url.path.endswith("/C2"):
+            return httpx.Response(200, json={"status_code": "FINISHED"})
+        if req.url.path.endswith("/media_publish"):
+            assert "creation_id=C2" in req.content.decode()
+            return httpx.Response(200, json={"id": "M2"})
+        return httpx.Response(404, json={"error": {"message": "unbekannt"}})
+
+    mid = instagram.publish_reel("IG1", "tok", "https://x/media/a.mp4", "cap", video_path=video,
+                                 client=httpx.Client(transport=httpx.MockTransport(handler)), sleep=lambda s: None)
+    assert mid == "M2"
+    assert any(h == "rupload.facebook.com" for _, h, _ in calls)
+
+
+def test_publish_reel_upload_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr(settings, "instagram_upload", "upload")
+    video = tmp_path / "a.mp4"
+    video.write_bytes(b"abc")
+    seen = []
+
+    def handler(req: httpx.Request):
+        seen.append(req.url.host)
+        if req.url.path.endswith("/media"):
+            assert "video_url" not in req.content.decode()
+            return httpx.Response(200, json={"id": "C3"})  # no uri: built from the container id
+        if req.url.host == "rupload.facebook.com":
+            assert req.url.path.endswith("/C3")
+            return httpx.Response(200, json={"success": True})
+        if req.url.path.endswith("/C3"):
+            return httpx.Response(200, json={"status_code": "FINISHED"})
+        return httpx.Response(200, json={"id": "M3"})
+
+    assert instagram.publish_reel("IG1", "tok", "u", "c", video_path=video,
+                                  client=httpx.Client(transport=httpx.MockTransport(handler)), sleep=lambda s: None) == "M3"
+    assert "rupload.facebook.com" in seen

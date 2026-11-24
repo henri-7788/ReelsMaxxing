@@ -160,7 +160,8 @@ def publish(post_id: int) -> dict:
     events.set_progress(post_id, "upload")
     try:
         media_id = instagram.publish_reel(account["ig_user_id"], account["access_token"],
-                                          media_url(post["media_file"]), post["caption"] or "")
+                                          media_url(post["media_file"]), post["caption"] or "",
+                                          video_path=settings.media_dir / post["media_file"])
     except Exception as e:
         log.warning("Post %s: Veröffentlichen fehlgeschlagen: %s", post_id, e)
         return report_result(post_id, "failed", error=f"Instagram: {e}")
