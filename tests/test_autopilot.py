@@ -71,7 +71,10 @@ def test_plan_never_overlaps_across_accounts():
     for s, e, r in blocks:
         assert e - s == timedelta(minutes=10)
         assert s >= NOW
-        if r["slot"] > "2026-11-24 06:25":  # enough time ahead: done 15 min before the slot
+        if r["kind"] == "start":  # "every X hours": the run begins at its time, never before
+            assert s >= scheduler.parse_slot(r["slot"])
+            assert r["post_at"] == r["end"]
+        elif r["slot"] > "2026-11-24 06:25":  # enough time ahead: done 15 min before the slot
             assert e <= scheduler.parse_slot(r["slot"]) - timedelta(minutes=15)
             assert r["state"] == "planned"
     assert len(blocks) == len({(r["account_id"], r["slot"]) for *_, r in blocks})
@@ -158,7 +161,9 @@ def test_api_interval_workflow_and_plan():
     assert c.post("/ui-api/accounts", json={**body, "interval_hours": 0}).status_code == 400
     acc = c.put(f"/ui-api/accounts/{acc['id']}/workflow", json={"on": True}).json()
     assert acc["active"] is True and acc["next_slot"]
-    plan = c.get("/ui-api/plan", params={"days": 2}).json()
+    plan = c.get("/ui-api/plan", params={"days": 3}).json()
+    # The rhythm starts the next time 07:05 comes, not somewhere in an old rhythm
+    assert plan["slots"][0]["slot"] == scheduler.next_anchor("07:05")
     assert len(plan["slots"]) >= 8
     assert plan["blocked"][0]["reason"] == "nicht mit Instagram verbunden"
     # The built-in autopilot posts: n8n gets nothing to do
@@ -192,3 +197,35 @@ def test_plan_random_interval_planned_days_ahead():
     slots = [r["slot"] for r in plan["renders"]]
     assert len(slots) >= 3 and slots[-1] > "2026-11-25"  # 24 h ahead already fixed
     assert all(r["state"] in ("planned", "late") for r in plan["renders"])
+
+
+def test_interval_slot_is_workflow_start_and_posts_when_ready(monkeypatch):
+    a = account("W", schedule_mode="interval", interval_hours=6, interval_start="07:00")
+    db.execute("UPDATE accounts SET interval_anchor = '2026-11-24 07:00' WHERE id = ?", (a,))
+    b = account("P", posting_times="07:20")  # fixed time: must render before 07:05, around W's run
+    plan = autopilot.plan(NOW)
+    w = next(r for r in plan["renders"] if r["account_id"] == a)
+    p = next(r for r in plan["renders"] if r["account_id"] == b)
+    assert w["slot"] == "2026-11-24 07:00" and w["start"].startswith("2026-11-24T07:00")
+    assert w["post_at"] == w["end"]
+    # P's render does not overlap W's run starting at 07:00
+    assert p["end"] <= w["start"] or p["start"] >= w["end"]
+    assert p["end"] <= "2026-11-24T07:05"
+    # Nothing is started before 07:00 for W
+    assert autopilot.next_job(datetime(2026, 11, 24, 6, 59, tzinfo=TZ))["account_id"] != a
+    # Ready after its start: posted right away
+    pid = db.create_post(a, {"id": "z", "subreddit": "aww", "title": "t", "author": "u", "permalink": "/"}, "2026-11-24 07:00")
+    db.update_post(pid, status="ready", media_file="z.mp4")
+    published = []
+    monkeypatch.setattr(pipeline, "publish", lambda post_id: published.append(post_id) or {"status": "published"})
+    autopilot.publish_due(datetime(2026, 11, 24, 7, 11, tzinfo=TZ))
+    assert published == [pid]
+
+
+def test_next_anchor():
+    now = datetime(2026, 11, 24, 9, 30, tzinfo=TZ)
+    assert scheduler.next_anchor("10:00", now) == "2026-11-24 10:00"
+    assert scheduler.next_anchor("08:00", now) == "2026-11-25 08:00"
+    acc = {"id": 1, "schedule_mode": "interval", "interval_hours": 6, "interval_start": "08:00", "interval_anchor": "2026-11-25 08:00"}
+    got = [scheduler.slot_key(t) for t in scheduler.slots_between(acc, now, now + timedelta(days=2))]
+    assert got[:3] == ["2026-11-25 08:00", "2026-11-25 14:00", "2026-11-25 20:00"]

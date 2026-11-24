@@ -28,7 +28,7 @@ export type Account = {
   interval_start: string
   /** > interval_hours: random gap between the two ("every 6-8 hours"), 0 = fixed gap */
   interval_hours_max: number
-  /** Random intervals only: posting times of today and the next two days, fixed in advance by the server */
+  /** "Every X hours" only: workflow start times of today and the next two days, from the server */
   upcoming_slots?: string[]
   /** When the workflow switch was last turned on (UTC ISO), "" if never */
   workflow_since: string
@@ -192,7 +192,12 @@ export function parseTimes(raw: string): string[] {
 }
 
 /** Planned render block from /ui-api/plan (times in the server's time zone, ISO with offset) */
-export type RenderBlock = { account_id: number; name: string; slot: string; start: string; end: string; state: "running" | "planned" | "late" }
+export type RenderBlock = {
+  account_id: number; name: string; slot: string; start: string; end: string; state: "running" | "planned" | "late"
+  /** "post": slot is the posting time (rendered before). "start": slot is the workflow start ("every X hours"), posted when ready */
+  kind?: "post" | "start"
+  post_at?: string
+}
 export type Plan = {
   slots: { account_id: number; slot: string }[]
   renders: RenderBlock[]
@@ -226,7 +231,7 @@ export const isRandomInterval = (a: Pick<Account, "schedule_mode" | "interval_ho
   a.schedule_mode === "interval" && (a.interval_hours_max ?? 0) > a.interval_hours
 
 export function dayTimes(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times" | "interval_hours_max" | "upcoming_slots">, day = new Date()): string[] {
-  if (isRandomInterval(a)) return (a.upcoming_slots ?? []).filter((s) => s.startsWith(dayKey(day))).map((s) => s.slice(11))
+  if (a.schedule_mode === "interval" && a.upcoming_slots) return a.upcoming_slots.filter((s) => s.startsWith(dayKey(day))).map((s) => s.slice(11))
   return a.schedule_mode === "interval" ? intervalTimes(a.interval_hours, a.interval_start, day) : parseTimes(a.posting_times)
 }
 

@@ -1,5 +1,8 @@
 """Built-in autopilot: plans render times, renders ahead of each posting slot and posts on time.
 
+"Every X hours" accounts work the other way round: their slot is the start of the run, so the
+render block begins at that time and the video is posted as soon as it is ready.
+
 Every account with the workflow switch on is handled here (AUTOMATION=internal, the default).
 
 Planning: every upcoming slot of every account gets one render block of the estimated render
@@ -102,17 +105,36 @@ def plan(now: datetime | None = None, until: datetime | None = None) -> dict:
                 continue  # switched on after this slot: no catch-up
             if running and (running["account_id"], running["slot"]) == key:
                 continue
-            jobs.append({"account_id": acc["id"], "name": acc["name"], "slot": key[1], "at": t})
+            jobs.append({"account_id": acc["id"], "name": acc["name"], "slot": key[1], "at": t,
+                         "kind": "start" if scheduler.starts_workflow(acc) else "post"})
 
-    # Backwards: each block ends before its slot and before the next block starts
-    jobs.sort(key=lambda j: (j["at"], j["account_id"]), reverse=True)
+    # 1. Workflow starts ("every X hours"): the run begins at its time, queued behind another one
+    #    if two collide. These blocks are fixed first; posting-time renders are fitted around them.
+    starts = sorted((j for j in jobs if j["kind"] == "start"), key=lambda j: (j["at"], j["account_id"]))
+    cursor = None
+    for j in starts:
+        begin = j["at"] if cursor is None else max(j["at"], cursor)
+        j["start"], j["end"] = begin, begin + budget
+        cursor = j["end"]
+    reserved = [(j["start"], j["end"]) for j in starts]
+
+    # 2. Posting times: backwards, as late as possible, each block done before its slot,
+    #    before the next block and outside the workflow starts
+    posts = sorted((j for j in jobs if j["kind"] == "post"), key=lambda j: (j["at"], j["account_id"]), reverse=True)
     limit = None
-    for j in jobs:
+    for j in posts:
         end = j["at"] - lead
         if limit is not None and end > limit:
             end = limit
+        moved = True
+        while moved:
+            moved = False
+            for rs, re_ in reserved:
+                if end - budget < re_ and end > rs:
+                    end, moved = rs, True
         j["start"], j["end"] = end - budget, end
         limit = j["start"]
+    jobs = sorted(jobs, key=lambda j: (j["start"], j["account_id"]), reverse=True)
 
     # Forwards: nothing starts in the past or while the current render still runs
     cursor = now
@@ -133,7 +155,11 @@ def plan(now: datetime | None = None, until: datetime | None = None) -> dict:
     for j in jobs:
         renders.append({"account_id": j["account_id"], "name": j["name"], "slot": j["slot"],
                         "start": j["start"].isoformat(timespec="minutes"), "end": j["end"].isoformat(timespec="minutes"),
-                        "state": "late" if j["end"] > j["at"] else "planned"})
+                        "kind": j["kind"],
+                        # When the video goes out: at the slot, or right after rendering for workflow starts
+                        "post_at": (j["end"] if j["kind"] == "start" else j["at"]).isoformat(timespec="minutes"),
+                        "state": ("late" if j["start"] > j["at"] else "planned") if j["kind"] == "start"
+                        else ("late" if j["end"] > j["at"] else "planned")})
     return {"renders": renders, "blocked": blocked, "render_minutes": int(budget.total_seconds() // 60),
             "lead_minutes": settings.render_lead_minutes}
 
@@ -180,13 +206,15 @@ def due_posts(now: datetime | None = None) -> list[dict]:
     now = now_local(now)
     window = timedelta(minutes=settings.slot_window_minutes)
     out = []
-    for p in db.rows("SELECT p.id, p.slot, p.account_id FROM posts p JOIN accounts a ON a.id = p.account_id"
+    for p in db.rows("SELECT p.id, p.slot, p.account_id, a.schedule_mode FROM posts p JOIN accounts a ON a.id = p.account_id"
                      " WHERE p.status = 'ready' AND p.slot IS NOT NULL AND a.active = 1 ORDER BY p.slot, p.id"):
         try:
             at = parse_slot(p["slot"])
         except ValueError:
             continue
-        if at <= now < at + window:
+        # Workflow starts post as soon as the video is ready; rendering (and a queue) comes on top of the window
+        until = at + window + (timedelta(seconds=render_estimate_seconds()) * 2 if p["schedule_mode"] == "interval" else timedelta(0))
+        if at <= now < until:
             out.append(p)
     return out
 

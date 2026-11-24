@@ -14,7 +14,7 @@ import { StartRun } from "@/components/StartRun"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, api, dayKey, formatSlot, intervalTimes, parseTimes, scheduleLabel, setWorkflow, tokenDaysLeft, trend, type Account, type Plan, type Post, type ScheduleMode, type Source, type Stats } from "@/lib/api"
+import { accountBody, api, dayKey, formatSlot, parseTimes, scheduleLabel, setWorkflow, tokenDaysLeft, trend, type Account, type Plan, type Post, type ScheduleMode, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 import type { Preset } from "@/lib/overlay"
 
@@ -65,11 +65,10 @@ function TimeChips({ value, onChange }: { value: string; onChange: (v: string) =
 
 function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, unsaved }: {
   hours: number; max: number; start: string; onHours: (v: number) => void; onMax: (v: number) => void; onStart: (v: string) => void
-  /** Saved random posting times from the server (random gaps cannot be computed here) */
+  /** Saved run times from the server (depend on the stored start and on random gaps) */
   upcoming: string[]; unsaved: boolean
 }) {
   const random = max > 0
-  const fixed = intervalTimes(hours, start)
   const fmt = (n: number) => String(n).replace(".", ",")
   return (
     <div className="flex flex-col gap-3">
@@ -85,29 +84,21 @@ function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, 
             <input className="field tabular" type="number" min={hours} max={168} step={0.5} value={max} onChange={(e) => onMax(+e.target.value)} />
           </label>
         )}
-        <label className={`label ${random ? "w-52" : "w-36"}`}>
-          {random ? "Erster Workflow-Durchlauf" : "Beginnend um"}
+        <label className="label w-52">
+          Erster Workflow-Durchlauf
           <input className="field tabular" type="time" value={start} onChange={(e) => onStart(e.target.value)} />
         </label>
       </div>
-      {random ? (
-        <>
-          <div className="flex flex-wrap gap-1.5" aria-label="Nächste Posting-Zeiten">
-            {unsaved ? <span className="caption">Nach dem Speichern erscheinen hier die nächsten Zeiten.</span>
-              : upcoming.length === 0 ? <span className="caption">Keine Zeiten in den nächsten Tagen.</span>
-              : upcoming.slice(0, 8).map((t) => <span key={t} className="tag tabular">{formatSlot(t)}</span>)}
-          </div>
-          <p className="hint">Der erste Workflow-Durchlauf postet zu dieser Uhrzeit (gerendert wird vorher). Danach kommt der nächste irgendwann {fmt(hours)} bis {fmt(max)} Stunden später. Die Zeitpunkte werden schon Tage im Voraus festgelegt, damit das Rendern früh eingeplant wird; im Kalender und im Render-Plan siehst du sie.</p>
-        </>
-      ) : (
-        <>
-          <div className="flex flex-wrap gap-1.5" aria-label="Posting-Zeiten heute">
-            {fixed.length === 0 ? <span className="caption">Abstand zwischen 0,5 und 168 Stunden wählen.</span>
-              : fixed.map((t) => <span key={t} className="tag tabular">{t}</span>)}
-          </div>
-          <p className="hint">Der Rhythmus läuft über Mitternacht weiter{hours > 24 ? ", also nicht jeden Tag zur selben Zeit" : 24 % hours ? ", die Uhrzeiten verschieben sich daher von Tag zu Tag" : ""}. Oben die Zeiten von heute.</p>
-        </>
-      )}
+      <div className="flex flex-wrap gap-1.5" aria-label="Nächste Workflow-Durchläufe">
+        {unsaved ? <span className="caption">Nach dem Speichern erscheinen hier die nächsten Durchläufe.</span>
+          : upcoming.length === 0 ? <span className="caption">Keine Durchläufe in den nächsten Tagen.</span>
+          : upcoming.slice(0, 8).map((t) => <span key={t} className="tag tabular">{formatSlot(t)}</span>)}
+      </div>
+      <p className="hint">
+        Um {start || "–"} startet der erste Workflow-Durchlauf: Video holen und rendern, gepostet wird, sobald es fertig ist.
+        Danach startet der nächste {random ? `irgendwann ${fmt(hours)} bis ${fmt(max)} Stunden später (Zeitpunkte schon Tage im Voraus festgelegt, damit früh geplant wird)` : `alle ${fmt(hours)} Stunden`}.
+        Beim Einschalten des Workflows oder Ändern der Uhrzeit beginnt es wieder beim nächsten {start || "–"}.
+      </p>
     </div>
   )
 }
@@ -116,6 +107,7 @@ function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, 
 function RenderPlanCard({ accountId, active, className = "" }: { accountId: number; active: boolean; className?: string }) {
   const { data, error } = useApi<Plan>(`/plan?account_id=${accountId}&days=3`, 30_000)
   const t = (iso: string) => new Date(iso).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })
+  const hm = (iso: string) => new Date(iso).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })
   const renders = data?.renders.slice(0, 8) ?? []
   const blocked = data?.blocked[0]
   return (
@@ -131,9 +123,18 @@ function RenderPlanCard({ accountId, active, className = "" }: { accountId: numb
         <ul className="divide-y divide-line">
           {renders.map((r) => (
             <li key={r.slot} className="flex items-center gap-3 py-2">
-              <span className="w-36 flex-none whitespace-nowrap font-medium text-ink tabular">Post {formatSlot(r.slot)}</span>
-              <span className="caption flex-1 tabular">Rendern {t(r.start)} – {new Date(r.end).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>
-              <TonePill tone={r.state === "running" ? "success" : r.state === "late" ? "warning" : "muted"}>{r.state === "running" ? "läuft" : r.state === "late" ? "knapp" : "geplant"}</TonePill>
+              {r.kind === "start" ? (
+                <>
+                  <span className="w-36 flex-none whitespace-nowrap font-medium text-ink tabular">Start {formatSlot(r.slot)}</span>
+                  <span className="caption flex-1 tabular">Rendern {t(r.start)} – {hm(r.end)}, Post ca. {hm(r.post_at ?? r.end)}</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-36 flex-none whitespace-nowrap font-medium text-ink tabular">Post {formatSlot(r.slot)}</span>
+                  <span className="caption flex-1 tabular">Rendern {t(r.start)} – {hm(r.end)}</span>
+                </>
+              )}
+              <TonePill tone={r.state === "running" ? "success" : r.state === "late" ? "warning" : "muted"}>{r.state === "running" ? "läuft" : r.state === "late" ? (r.kind === "start" ? "verschoben" : "knapp") : "geplant"}</TonePill>
             </li>
           ))}
         </ul>
@@ -437,7 +438,7 @@ export default function AccountPage() {
             <Switch checked={account.active} onChange={toggleWorkflow} label="Workflow ein oder aus">Workflow</Switch>
             <TonePill tone={connected ? "success" : "warning"}>{connected ? "Instagram verbunden" : "Instagram fehlt"}</TonePill>
             {sources.length === 0 && <TonePill tone="warning">Keine Quellen</TonePill>}
-            {account.active && <span className="caption">Nächster Post: {formatSlot(account.next_slot)} · {scheduleLabel(account)}</span>}
+            {account.active && <span className="caption">{account.schedule_mode === "interval" ? "Nächster Durchlauf" : "Nächster Post"}: {formatSlot(account.next_slot)} · {scheduleLabel(account)}</span>}
           </div>
         </div>
         <StartRun account={account} hasSources={sources.length > 0} onChange={reloadAfterRun} />

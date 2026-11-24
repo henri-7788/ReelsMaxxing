@@ -1,4 +1,9 @@
-"""Posting slots of an account: fixed daily times or "every X hours".
+"""Slots of an account: fixed daily times or "every X hours".
+
+Fixed times are posting times: the video is rendered ahead and posted at that time.
+"Every X hours" slots are workflow starts: at that time the run begins (fetch, render) and the
+video is posted as soon as it is ready. The rhythm starts at the interval_anchor: the first time
+interval_start comes after the schedule was saved or the workflow was switched on.
 
 A slot is due when its time has passed, it is not older than SLOT_WINDOW_MINUTES, and no post for
 it is running/published yet. The built-in autopilot (app/autopilot.py) renders ahead of the slots;
@@ -76,6 +81,31 @@ def random_gap(account_id, after: datetime, lo: float, hi: float) -> timedelta:
     return timedelta(minutes=round((lo + frac * (hi - lo)) * 60))
 
 
+def starts_workflow(account: dict) -> bool:
+    """True: slots are workflow starts (post when rendered). False: slots are posting times."""
+    return account.get("schedule_mode") == "interval"
+
+
+def next_anchor(start: str, now: datetime | None = None) -> str:
+    """First time `start` (HH:MM) comes at or after now, as 'YYYY-MM-DD HH:MM' (local)."""
+    hh, mm = parse_time(start)
+    now = now_local(now).replace(tzinfo=None, second=0, microsecond=0)
+    t = now.replace(hour=hh, minute=mm)
+    if t < now:
+        t += timedelta(days=1)
+    return slot_key(t)
+
+
+def anchor_of(account: dict) -> datetime:
+    """Naive local time of the first interval run (old accounts without anchor: a fixed day in 2024)."""
+    raw = account.get("interval_anchor") or ""
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        hh, mm = parse_time(account.get("interval_start") or "00:00")
+        return INTERVAL_ANCHOR.replace(hour=hh, minute=mm)
+
+
 def slot_key(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
@@ -88,15 +118,14 @@ _chains: dict[tuple, list[datetime]] = {}
 _chains_lock = threading.Lock()
 
 
-def _random_chain(account_id, start: str, lo: float, hi: float, since: datetime, until: datetime) -> list[datetime]:
-    """Posting times with random gaps in [since, until) (wall-clock, naive), counted from the anchor.
+def _random_chain(account_id, anchor: datetime, lo: float, hi: float, since: datetime, until: datetime) -> list[datetime]:
+    """Run times with random gaps in [since, until) (wall-clock, naive), counted from the anchor.
 
     Walked once from the anchor and cached, so the plan (checked every few seconds) stays cheap.
     """
-    hh, mm = parse_time(start)
-    key = (account_id, hh, mm, lo, hi)
+    key = (account_id, anchor, lo, hi)
     with _chains_lock:
-        chain = _chains.setdefault(key, [INTERVAL_ANCHOR.replace(hour=hh, minute=mm)])
+        chain = _chains.setdefault(key, [anchor])
         while chain[-1] < until:
             chain.append(chain[-1] + random_gap(account_id, chain[-1], lo, hi))
         return chain[bisect.bisect_left(chain, since):bisect.bisect_left(chain, until)]
@@ -114,13 +143,12 @@ def slots_between(account: dict, start: datetime, end: datetime) -> list[datetim
         lo = float(account.get("interval_hours") or 0)
         hi = float(account.get("interval_hours_max") or 0)
         if account.get("schedule_mode") == "interval" and hi > lo >= MIN_INTERVAL_HOURS:
-            out.extend(_random_chain(account.get("id"), account.get("interval_start") or "00:00", lo, hi, a, b))
+            out.extend(_random_chain(account.get("id"), anchor_of(account), lo, hi, a, b))
         elif account.get("schedule_mode") == "interval":
             step = timedelta(hours=lo)
             if step < timedelta(hours=MIN_INTERVAL_HOURS):
                 return []
-            hh, mm = parse_time(account.get("interval_start") or "00:00")
-            anchor = INTERVAL_ANCHOR.replace(hour=hh, minute=mm)
+            anchor = anchor_of(account)
             k = max(0, math.ceil((a - anchor) / step))
             t = anchor + k * step
             while t < b:

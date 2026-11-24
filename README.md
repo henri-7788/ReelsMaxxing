@@ -53,8 +53,11 @@ Jeder Account hat einen Schalter **Workflow** (Account-Seite oben, Account-Liste
 läuft alles von selbst im Container: Reddit-Video holen, rendern und zur Posting-Zeit über die
 Graph API posten. n8n ist dafür nicht nötig.
 
-* **Veröffentlichung**: entweder *Feste Uhrzeiten* (täglich) oder *Alle X Stunden* ab einer
-  Startzeit (0,5–168 h). Der Rhythmus läuft über Mitternacht weiter.
+* **Veröffentlichung**: entweder *Feste Uhrzeiten* (täglich, das sind Post-Zeiten: gerendert
+  wird vorher) oder *Alle X Stunden* (0,5–168 h). Bei *Alle X Stunden* ist die Uhrzeit
+  „Erster Workflow-Durchlauf“ der **Start** eines Durchlaufs: um diese Zeit wird das Video geholt
+  und gerendert und gepostet, sobald es fertig ist. Der Rhythmus beginnt beim nächsten Mal, wenn
+  diese Uhrzeit kommt (nach dem Speichern bzw. Einschalten), und läuft über Mitternacht weiter.
   Mit **Zufälliger Abstand** wird daraus ein Bereich, z. B. 6–8 h: nach jedem Post kommt der
   nächste irgendwann in diesem Bereich (minutengenau). Die Zeitpunkte sind pseudo-zufällig, aber
   fest und schon Tage im Voraus bekannt, damit die Render-Planung sie früh einplanen kann. Sie
