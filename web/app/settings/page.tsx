@@ -119,6 +119,8 @@ export default function SettingsPage() {
           <>
             <Card>
               <CardHeader title="Automatisierung" />
+              <Row label="Steuerung" hint="AUTOMATION">{cfg.automation.mode === "internal" ? "Eingebauter Autopilot: holt, rendert und postet jeden Account mit eingeschaltetem Workflow" : "n8n fragt /api/due ab, der Autopilot ist aus"}</Row>
+              {cfg.automation.mode === "internal" && <Row label="Render-Planung" hint="RENDER_MINUTES, RENDER_LEAD_MINUTES, PLAN_HOURS">{cfg.automation.render_minutes} min pro Video reserviert (passt sich an gemessene Renderzeiten an), fertig {cfg.automation.render_lead_minutes} min vor dem Posten, {cfg.automation.plan_hours} h im Voraus. Nie zwei Renders gleichzeitig.</Row>}
               <Row label="Slot-Fenster" hint="SLOT_WINDOW_MINUTES">Ein Slot bleibt {cfg.automation.slot_window_minutes} Minuten nach seiner Uhrzeit fällig</Row>
               <Row label="Versuche pro Slot">höchstens {cfg.automation.max_attempts_per_slot}</Row>
               <Row label="Aufräumen der Medien" hint="MEDIA_RETENTION_HOURS">nach dem Posten, spätestens nach {cfg.automation.media_retention_hours} Stunden</Row>

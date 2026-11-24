@@ -1,8 +1,10 @@
-"""Decides which account has a posting slot due right now.
+"""Posting slots of an account: fixed daily times or "every X hours".
 
-n8n asks every ~15 minutes. A slot is due when its time today has passed, it is
-not older than SLOT_WINDOW_MINUTES, and no post for it is running/published yet.
+A slot is due when its time has passed, it is not older than SLOT_WINDOW_MINUTES, and no post for
+it is running/published yet. The built-in autopilot (app/autopilot.py) renders ahead of the slots;
+with AUTOMATION=n8n the old way still works: n8n asks /api/due every ~15 minutes.
 """
+import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,6 +12,19 @@ from . import db
 from .config import settings
 
 MAX_ATTEMPTS_PER_SLOT = 2
+MODES = ("times", "interval")
+MIN_INTERVAL_HOURS = 0.5
+MAX_INTERVAL_HOURS = 168
+# "Every X hours" counts from this day at interval_start, so the rhythm keeps going across midnight
+INTERVAL_ANCHOR = datetime(2024, 1, 1)
+
+
+def tz() -> ZoneInfo:
+    return ZoneInfo(settings.timezone)
+
+
+def now_local(now: datetime | None = None) -> datetime:
+    return now.astimezone(tz()) if now else datetime.now(tz())
 
 
 def parse_times(raw: str) -> list[tuple[int, int]]:
@@ -26,24 +41,82 @@ def parse_times(raw: str) -> list[tuple[int, int]]:
     return sorted(set(out))
 
 
+def parse_time(raw: str) -> tuple[int, int]:
+    times = parse_times(raw or "")
+    if len(times) != 1:
+        raise ValueError(f"Ungültige Startzeit: {raw}")
+    return times[0]
+
+
+def validate(mode: str, posting_times: str, interval_hours: float, interval_start: str) -> None:
+    """Raises ValueError with a message for the UI."""
+    if mode not in MODES:
+        raise ValueError("Unbekannter Zeitplan")
+    parse_times(posting_times)
+    if mode == "interval":
+        if not (MIN_INTERVAL_HOURS <= interval_hours <= MAX_INTERVAL_HOURS):
+            raise ValueError(f"Abstand muss zwischen {MIN_INTERVAL_HOURS:g} und {MAX_INTERVAL_HOURS} Stunden liegen")
+        parse_time(interval_start)
+
+
 def slot_key(dt: datetime) -> str:
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
+def parse_slot(key: str) -> datetime:
+    return datetime.strptime(key, "%Y-%m-%d %H:%M").replace(tzinfo=tz())
+
+
+def slots_between(account: dict, start: datetime, end: datetime) -> list[datetime]:
+    """All posting times of the account with start <= t < end (local time, aware), sorted.
+
+    Computed on wall-clock time, so 08:00 stays 08:00 after a daylight saving switch.
+    """
+    zone = tz()
+    a, b = start.astimezone(zone).replace(tzinfo=None), end.astimezone(zone).replace(tzinfo=None)
+    out: list[datetime] = []
+    try:
+        if account.get("schedule_mode") == "interval":
+            step = timedelta(hours=float(account.get("interval_hours") or 0))
+            if step < timedelta(hours=MIN_INTERVAL_HOURS):
+                return []
+            hh, mm = parse_time(account.get("interval_start") or "00:00")
+            anchor = INTERVAL_ANCHOR.replace(hour=hh, minute=mm)
+            k = max(0, math.ceil((a - anchor) / step))
+            t = anchor + k * step
+            while t < b:
+                if t >= a:
+                    out.append(t.replace(second=0, microsecond=0))
+                t += step
+        else:
+            times = parse_times(account.get("posting_times") or "")
+            day = a.replace(hour=0, minute=0, second=0, microsecond=0)
+            while day < b:
+                for hh, mm in times:
+                    t = day.replace(hour=hh, minute=mm)
+                    if a <= t < b:
+                        out.append(t)
+                day += timedelta(days=1)
+    except ValueError:
+        return []
+    return [t.replace(tzinfo=zone) for t in sorted(set(out))]
+
+
+def failed_attempts(account_id: int, key: str) -> int:
+    return db.row("SELECT COUNT(*) AS n FROM posts WHERE account_id = ? AND slot = ? AND status = 'failed'",
+                  (account_id, key))["n"]
+
+
 def due_slot(account: dict, now: datetime | None = None) -> str | None:
-    tz = ZoneInfo(settings.timezone)
-    now = now.astimezone(tz) if now else datetime.now(tz)
+    now = now_local(now)
     window = timedelta(minutes=settings.slot_window_minutes)
-    for hh, mm in reversed(parse_times(account["posting_times"])):
-        planned = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-        if planned <= now < planned + window:
-            key = slot_key(planned)
-            if db.slot_taken(account["id"], key):
-                return None
-            failed = db.row("SELECT COUNT(*) AS n FROM posts WHERE account_id = ? AND slot = ? AND status = 'failed'",
-                            (account["id"], key))["n"]
-            return key if failed < MAX_ATTEMPTS_PER_SLOT else None
-    return None
+    recent = slots_between(account, now - window + timedelta(seconds=1), now + timedelta(seconds=1))
+    if not recent:
+        return None
+    key = slot_key(recent[-1])
+    if db.slot_taken(account["id"], key):
+        return None
+    return key if failed_attempts(account["id"], key) < MAX_ATTEMPTS_PER_SLOT else None
 
 
 def due_accounts(now: datetime | None = None) -> list[dict]:
@@ -58,17 +131,7 @@ def due_accounts(now: datetime | None = None) -> list[dict]:
 
 
 def next_slot(account: dict, now: datetime | None = None) -> str | None:
-    """Next planned posting time (today or tomorrow) as 'YYYY-MM-DD HH:MM', for the UI."""
-    tz = ZoneInfo(settings.timezone)
-    now = now.astimezone(tz) if now else datetime.now(tz)
-    try:
-        times = parse_times(account["posting_times"])
-    except ValueError:
-        return None
-    for day in (0, 1):
-        base = now + timedelta(days=day)
-        for hh, mm in times:
-            planned = base.replace(hour=hh, minute=mm, second=0, microsecond=0)
-            if planned > now:
-                return slot_key(planned)
-    return None
+    """Next planned posting time as 'YYYY-MM-DD HH:MM', for the UI."""
+    now = now_local(now)
+    upcoming = slots_between(account, now + timedelta(seconds=1), now + timedelta(days=8))
+    return slot_key(upcoming[0]) if upcoming else None

@@ -10,6 +10,8 @@ export type Source = {
   allow_nsfw: number
 }
 
+export type ScheduleMode = "times" | "interval"
+
 export type Account = {
   id: number
   name: string
@@ -20,6 +22,12 @@ export type Account = {
   has_token: boolean
   active: boolean
   posting_times: string
+  /** "times": fixed daily times, "interval": every interval_hours from interval_start */
+  schedule_mode: ScheduleMode
+  interval_hours: number
+  interval_start: string
+  /** When the workflow switch was last turned on (UTC ISO), "" if never */
+  workflow_since: string
   caption_template: string
   hashtags: string
   hook_enabled: boolean
@@ -123,7 +131,7 @@ export type SettingsInfo = {
   instagram: { configured: boolean; app_id: string; config_id: string; redirect_uri: string; deauthorize_url: string; data_deletion_url: string; graph_api_base: string }
   ui_auth: boolean
   render: { encoder: string; x264_preset: string; width: number; height: number; loudness_lufs: number; preset_defaults: Record<string, unknown> }
-  automation: { slot_window_minutes: number; max_attempts_per_slot: number; media_retention_hours: number }
+  automation: { mode: "internal" | "n8n"; render_minutes: number; render_lead_minutes: number; plan_hours: number; slot_window_minutes: number; max_attempts_per_slot: number; media_retention_hours: number }
   timezone: string
   data_dir: string
 }
@@ -153,6 +161,7 @@ export function accountBody(a: Account, patch: Partial<Account> = {}) {
   const m = { ...a, ...patch }
   return {
     name: m.name, ig_user_id: m.ig_user_id, access_token: "", active: m.active, posting_times: m.posting_times,
+    schedule_mode: m.schedule_mode ?? "times", interval_hours: m.interval_hours ?? 6, interval_start: m.interval_start || "08:00",
     caption_template: m.caption_template, hashtags: m.hashtags, hook_enabled: m.hook_enabled,
   }
 }
@@ -177,6 +186,47 @@ export function parseTimes(raw: string): string[] {
   return [...out].sort()
 }
 
+/** Planned render block from /ui-api/plan (times in the server's time zone, ISO with offset) */
+export type RenderBlock = { account_id: number; name: string; slot: string; start: string; end: string; state: "running" | "planned" | "late" }
+export type Plan = {
+  slots: { account_id: number; slot: string }[]
+  renders: RenderBlock[]
+  blocked: { account_id: number; name: string; reason: string }[]
+  now: string
+  automation: "internal" | "n8n"
+  render_minutes: number | null
+  lead_minutes: number
+}
+
+/** Turns the workflow of an account on or off (autopilot: fetch, render, post) */
+export const setWorkflow = (id: number, on: boolean) => api<Account>(`/accounts/${id}/workflow`, { method: "PUT", body: { on } })
+
+/** Posting times of one day for the "every X hours" mode, as HH:MM (same rhythm as the server: counted from 2024-01-01). */
+export function intervalTimes(hours: number, start: string, day = new Date()): string[] {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(start)
+  if (!m || !(hours >= 0.5)) return []
+  const step = hours * 3_600_000
+  const anchor = Date.UTC(2024, 0, 1, +m[1], +m[2])
+  const from = Date.UTC(day.getFullYear(), day.getMonth(), day.getDate())
+  const out: string[] = []
+  for (let t = anchor + Math.max(0, Math.ceil((from - anchor) / step)) * step; t < from + 86_400_000; t += step) {
+    const d = new Date(t)
+    out.push(`${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`)
+  }
+  return out
+}
+
+/** Posting times of an account on one day (HH:MM), for both modes. */
+export function dayTimes(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times">, day = new Date()): string[] {
+  return a.schedule_mode === "interval" ? intervalTimes(a.interval_hours, a.interval_start, day) : parseTimes(a.posting_times)
+}
+
+export function scheduleLabel(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times">): string {
+  if (a.schedule_mode === "interval") return `alle ${String(a.interval_hours).replace(".", ",")} h ab ${a.interval_start}`
+  const t = parseTimes(a.posting_times)
+  return t.length ? `täglich ${t.join(", ")}` : "keine Zeiten"
+}
+
 export type AccountIssue = { tone: "danger" | "warning" | "muted" | "success"; label: string }
 export function accountIssue(a: Account, posts: Post[] = []): AccountIssue {
   const last = posts.find((p) => p.account_id === a.id && (p.status === "published" || p.status === "failed"))
@@ -184,8 +234,8 @@ export function accountIssue(a: Account, posts: Post[] = []): AccountIssue {
   if (!a.ig_user_id || !a.has_token) return { tone: "warning", label: "Instagram fehlt" }
   if (tokenDaysLeft(a) !== null && tokenDaysLeft(a)! < 7) return { tone: "warning", label: "Token läuft ab" }
   if (a.sources && a.sources.length === 0) return { tone: "warning", label: "Keine Quellen" }
-  if (!a.active) return { tone: "muted", label: "pausiert" }
-  return { tone: "success", label: "aktiv" }
+  if (!a.active) return { tone: "muted", label: "Workflow aus" }
+  return { tone: "success", label: "Workflow an" }
 }
 
 const nf = new Intl.NumberFormat("de-DE")

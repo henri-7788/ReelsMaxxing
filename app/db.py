@@ -72,6 +72,14 @@ MIGRATIONS = (
     ("accounts", "preset_id", "INTEGER"),
     # 1 = the Reddit source has no sound (has_audio false or a silent track)
     ("posts", "muted", "INTEGER NOT NULL DEFAULT 0"),
+    # Posting schedule: "times" (fixed daily times) or "interval" (every interval_hours from interval_start)
+    ("accounts", "schedule_mode", "TEXT NOT NULL DEFAULT 'times'"),
+    ("accounts", "interval_hours", "REAL NOT NULL DEFAULT 6"),
+    ("accounts", "interval_start", "TEXT NOT NULL DEFAULT '08:00'"),
+    # When the workflow switch (active) was last turned on; the autopilot ignores older slots
+    ("accounts", "workflow_since", "TEXT NOT NULL DEFAULT ''"),
+    # Seconds from start of download to finished render, used to plan render times
+    ("posts", "render_seconds", "REAL"),
 )
 
 _lock = threading.Lock()
@@ -114,6 +122,13 @@ def init_db() -> None:
             have = {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
             if col not in have:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+                if (table, col) == ("accounts", "workflow_since"):
+                    # The switch used to mean "n8n may post". Now it starts the built-in autopilot,
+                    # so existing accounts start switched off and are turned on on purpose.
+                    c.execute("UPDATE accounts SET active = 0")
+        # Renders do not survive a restart: free their slots so they are planned again
+        c.execute("UPDATE posts SET status = 'failed', error = 'Abgebrochen (Neustart während des Renderns)'"
+                  " WHERE status = 'rendering'")
         _make_presets_global(c)
 
 
@@ -155,7 +170,8 @@ def execute(sql: str, params=()) -> int:
 # --- accounts -------------------------------------------------------------
 ACCOUNT_FIELDS = ("name", "ig_user_id", "access_token", "active", "posting_times",
                   "caption_template", "hashtags", "hook_enabled", "ig_username", "token_expires_at",
-                  "token_refreshed_at", "client_business_id", "preset_id")
+                  "token_refreshed_at", "client_business_id", "preset_id", "schedule_mode",
+                  "interval_hours", "interval_start", "workflow_since")
 
 
 def get_account(account_id: int) -> dict | None:
@@ -176,6 +192,14 @@ def save_account(data: dict, account_id: int | None = None) -> int:
     sets = ", ".join(f"{k} = ?" for k in values)
     execute(f"UPDATE accounts SET {sets} WHERE id = ?", [*values.values(), account_id])
     return account_id
+
+
+def set_workflow(account_id: int, on: bool) -> None:
+    """Workflow switch. Turning it on starts counting slots from now (no catch-up of missed ones)."""
+    acc = get_account(account_id)
+    if acc and (bool(acc["active"]) != on or (on and not acc["workflow_since"])):
+        execute("UPDATE accounts SET active = ?, workflow_since = ? WHERE id = ?",
+                (int(on), now_iso() if on else acc["workflow_since"], account_id))
 
 
 def delete_account(account_id: int) -> None:
