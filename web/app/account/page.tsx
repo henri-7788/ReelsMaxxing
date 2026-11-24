@@ -14,13 +14,13 @@ import { StartRun } from "@/components/StartRun"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, api, formatSlot, parseTimes, tokenDaysLeft, trend, type Account, type Post, type Source, type Stats } from "@/lib/api"
+import { accountBody, api, formatSlot, intervalTimes, parseTimes, scheduleLabel, setWorkflow, tokenDaysLeft, trend, type Account, type Plan, type Post, type ScheduleMode, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 import type { Preset } from "@/lib/overlay"
 
 type Form = ReturnType<typeof accountBody>
 type Tab = "overview" | "content" | "editor" | "schedule" | "history"
-const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: true, posting_times: "18:00", caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
+const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: false, posting_times: "18:00", schedule_mode: "times", interval_hours: 6, interval_start: "08:00", caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
 const PLACEHOLDERS = ["{title}", "{author}", "{subreddit}", "{permalink}", "{hashtags}"]
 
 function Panel({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
@@ -58,8 +58,61 @@ function TimeChips({ value, onChange }: { value: string; onChange: (v: string) =
         </label>
         <button type="button" className="btn" onClick={add} disabled={!draft}><Plus size={16} /> Zeit</button>
       </div>
-      <p className="hint">Die Zeiten gelten täglich. Ein Slot bleibt nach seiner Uhrzeit noch eine Weile fällig, falls n8n später abfragt.</p>
+      <p className="hint">Die Zeiten gelten täglich. Gerendert wird vorher automatisch, sodass das Video zur Uhrzeit fertig ist.</p>
     </div>
+  )
+}
+
+function IntervalFields({ hours, start, onHours, onStart }: { hours: number; start: string; onHours: (v: number) => void; onStart: (v: string) => void }) {
+  const today = intervalTimes(hours, start)
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="label w-32">
+          Alle … Stunden
+          <input className="field tabular" type="number" min={0.5} max={168} step={0.5} value={hours} onChange={(e) => onHours(+e.target.value)} />
+        </label>
+        <label className="label w-36">
+          Beginnend um
+          <input className="field tabular" type="time" value={start} onChange={(e) => onStart(e.target.value)} />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-1.5" aria-label="Posting-Zeiten heute">
+        {today.length === 0 ? <span className="caption">Abstand zwischen 0,5 und 168 Stunden wählen.</span>
+          : today.map((t) => <span key={t} className="tag tabular">{t}</span>)}
+      </div>
+      <p className="hint">Der Rhythmus läuft über Mitternacht weiter{hours > 24 ? ", also nicht jeden Tag zur selben Zeit" : 24 % hours ? ", die Uhrzeiten verschieben sich daher von Tag zu Tag" : ""}. Oben die Zeiten von heute.</p>
+    </div>
+  )
+}
+
+/** Upcoming render blocks and posting times of this account from the shared, overlap-free plan. */
+function RenderPlanCard({ accountId, active, className = "" }: { accountId: number; active: boolean; className?: string }) {
+  const { data, error } = useApi<Plan>(`/plan?account_id=${accountId}&days=3`, 30_000)
+  const t = (iso: string) => new Date(iso).toLocaleString("de-DE", { weekday: "short", hour: "2-digit", minute: "2-digit" })
+  const renders = data?.renders.slice(0, 8) ?? []
+  const blocked = data?.blocked[0]
+  return (
+    <Card className={className}>
+      <CardHeader title="Render-Plan" sub={data?.render_minutes ? `Je Video ${data.render_minutes} min reserviert, fertig ${data.lead_minutes} min vor dem Posten. Nie zwei gleichzeitig, auch nicht accountübergreifend.` : undefined} />
+      {error && !data ? <ErrorState message={error} /> : !data ? <Skeleton className="h-24" /> : data.automation !== "internal" ? (
+        <p className="caption">Gesteuert über n8n (AUTOMATION=n8n). Der eingebaute Autopilot ist aus.</p>
+      ) : !active ? (
+        <p className="caption">Workflow ist aus. Schalte ihn oben ein, dann wird hier geplant.</p>
+      ) : blocked ? (
+        <p className="flex items-center gap-2 text-ink"><TriangleAlert size={16} className="flex-none text-warning" /> Nichts geplant: {blocked.reason}.</p>
+      ) : renders.length === 0 ? <p className="caption">Keine Slots in den nächsten Tagen.</p> : (
+        <ul className="divide-y divide-line">
+          {renders.map((r) => (
+            <li key={r.slot} className="flex items-center gap-3 py-2">
+              <span className="w-36 flex-none whitespace-nowrap font-medium text-ink tabular">Post {formatSlot(r.slot)}</span>
+              <span className="caption flex-1 tabular">Rendern {t(r.start)} – {new Date(r.end).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}</span>
+              <TonePill tone={r.state === "running" ? "success" : r.state === "late" ? "warning" : "muted"}>{r.state === "running" ? "läuft" : r.state === "late" ? "knapp" : "geplant"}</TonePill>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   )
 }
 
@@ -196,6 +249,20 @@ export default function AccountPage() {
     }
   }
 
+  async function toggleWorkflow(on: boolean) {
+    if (!account) return
+    try {
+      const res = await setWorkflow(account.id, on)
+      setAccount(res)
+      setForm((f) => ({ ...f, active: on }))
+      setSaved((f) => ({ ...f, active: on }))
+      toast(on ? "Workflow an: holt, rendert und postet jetzt automatisch" : "Workflow aus")
+      reloadAll()
+    } catch (e) {
+      toast((e as Error).message, "error")
+    }
+  }
+
   const reloadAfterRun = useCallback(() => { load(true); reloadAll() }, [load, reloadAll])
 
   async function preview() {
@@ -249,12 +316,15 @@ export default function AccountPage() {
         Name
         <input className="field" required maxLength={100} value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="z. B. Tiere" />
       </label>
-      <Switch checked={form.active} onChange={(v) => set("active", v)}>Aktiv, automatisch posten</Switch>
+      <Switch checked={form.active} onChange={(v) => set("active", v)}>Workflow an: holt, rendert und postet automatisch</Switch>
     </Panel>
   )
   const schedule = (
-    <Panel title="Posting-Zeiten" sub="Uhrzeiten, zu denen dieser Account ein Reel postet">
-      <TimeChips value={form.posting_times} onChange={(v) => set("posting_times", v)} />
+    <Panel title="Veröffentlichung" sub="Wann dieser Account ein Reel postet">
+      <Segmented<ScheduleMode> label="Art" value={form.schedule_mode} onChange={(v) => set("schedule_mode", v)} options={[{ value: "times", label: "Feste Uhrzeiten" }, { value: "interval", label: "Alle X Stunden" }]} />
+      {form.schedule_mode === "interval"
+        ? <IntervalFields hours={form.interval_hours} start={form.interval_start} onHours={(v) => set("interval_hours", v)} onStart={(v) => set("interval_start", v)} />
+        : <TimeChips value={form.posting_times} onChange={(v) => set("posting_times", v)} />}
     </Panel>
   )
   const daysLeft = account ? tokenDaysLeft(account) : null
@@ -336,10 +406,10 @@ export default function AccountPage() {
         <div className="min-w-48 flex-1">
           <h2 className="page-title truncate">{account.name}</h2>
           <div className="mt-1 flex flex-wrap items-center gap-2">
-            <TonePill tone={account.active ? "success" : "muted"}>{account.active ? "aktiv" : "pausiert"}</TonePill>
+            <Switch checked={account.active} onChange={toggleWorkflow} label="Workflow ein oder aus">Workflow</Switch>
             <TonePill tone={connected ? "success" : "warning"}>{connected ? "Instagram verbunden" : "Instagram fehlt"}</TonePill>
             {sources.length === 0 && <TonePill tone="warning">Keine Quellen</TonePill>}
-            {account.active && <span className="caption">Nächster Slot: {formatSlot(account.next_slot)}</span>}
+            {account.active && <span className="caption">Nächster Post: {formatSlot(account.next_slot)} · {scheduleLabel(account)}</span>}
           </div>
         </div>
         <StartRun account={account} hasSources={sources.length > 0} onChange={reloadAfterRun} />
@@ -397,8 +467,11 @@ export default function AccountPage() {
 
       {tab === "schedule" && (
         <div className="grid grid-cols-12 gap-4 md:gap-6">
-          <div className="col-span-12 xl:col-span-5">{schedule}</div>
-          <PostingTimesCard accountId={account.id} account={{ ...account, posting_times: form.posting_times }} className="col-span-12 xl:col-span-7" />
+          <div className="col-span-12 flex flex-col gap-4 md:gap-6 xl:col-span-5">
+            {schedule}
+            <RenderPlanCard accountId={account.id} active={account.active} />
+          </div>
+          <PostingTimesCard accountId={account.id} account={{ ...account, posting_times: form.posting_times, schedule_mode: form.schedule_mode, interval_hours: form.interval_hours, interval_start: form.interval_start }} className="col-span-12 xl:col-span-7" />
         </div>
       )}
 

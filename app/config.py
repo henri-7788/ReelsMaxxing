@@ -39,6 +39,15 @@ class Settings:
     media_retention_hours: int = field(default_factory=lambda: int(os.getenv("MEDIA_RETENTION_HOURS", "48")))
     # How long after a planned posting time a slot is still considered due
     slot_window_minutes: int = field(default_factory=lambda: int(os.getenv("SLOT_WINDOW_MINUTES", "90")))
+    # Who runs the schedule: "internal" (built-in autopilot renders ahead and posts itself) or
+    # "n8n" (old way: n8n polls /api/due, the autopilot stays off)
+    automation: str = field(default_factory=lambda: os.getenv("AUTOMATION", "internal").strip().lower())
+    # Minimum time reserved for one render (download + encode) when planning; grows with measured renders
+    render_minutes: int = field(default_factory=lambda: int(os.getenv("RENDER_MINUTES", "10")))
+    # A planned render should be done this long before its posting time
+    render_lead_minutes: int = field(default_factory=lambda: int(os.getenv("RENDER_LEAD_MINUTES", "15")))
+    # How far ahead renders are planned
+    plan_hours: int = field(default_factory=lambda: int(os.getenv("PLAN_HOURS", "48")))
     # Folder with the built web UI (Next.js static export). Default: app/web
     web_dir: str = field(default_factory=lambda: os.getenv("WEB_DIR", ""))
 

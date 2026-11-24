@@ -24,6 +24,10 @@ services:
       META_BUSINESS_ID: ${META_BUSINESS_ID:-}
       ENCODER: ${ENCODER:-libx264}
       TZ: Europe/Berlin
+      AUTOMATION: ${AUTOMATION:-internal}
+      RENDER_MINUTES: ${RENDER_MINUTES:-10}
+      RENDER_LEAD_MINUTES: ${RENDER_LEAD_MINUTES:-15}
+      PLAN_HOURS: ${PLAN_HOURS:-48}
     volumes:
       - reels-data:/data
     # For ENCODER=vaapi (Intel GPU) uncomment:

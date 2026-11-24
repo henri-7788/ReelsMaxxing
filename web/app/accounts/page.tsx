@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useMemo, useState } from "react"
 import { AccountAvatar, Card, EmptyState, ErrorState, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, accountIssue, api, formatSlot, parseTimes, type Account } from "@/lib/api"
+import { accountIssue, formatSlot, scheduleLabel, setWorkflow, type Account } from "@/lib/api"
 import { useData } from "@/lib/data"
 
 type Filter = "all" | "active" | "paused" | "issues"
@@ -27,8 +27,8 @@ export default function AccountsPage() {
 
   async function toggle(a: Account, active: boolean) {
     try {
-      await api(`/accounts/${a.id}`, { method: "PUT", body: accountBody(a, { active }) })
-      toast(active ? `„${a.name}“ postet wieder automatisch` : `„${a.name}“ pausiert`)
+      await setWorkflow(a.id, active)
+      toast(active ? `Workflow für „${a.name}“ an` : `Workflow für „${a.name}“ aus`)
       reload()
     } catch (e) {
       toast((e as Error).message, "error")
@@ -45,7 +45,7 @@ export default function AccountsPage() {
           <input className="field !pl-9" placeholder="Account suchen" aria-label="Account suchen" value={q} onChange={(e) => setQ(e.target.value)} />
         </div>
         <div className="max-w-full overflow-x-auto">
-          <Segmented<Filter> label="Filter" value={filter} onChange={setFilter} options={[{ value: "all", label: `Alle (${accounts.length})` }, { value: "active", label: "Aktiv" }, { value: "paused", label: "Pausiert" }, { value: "issues", label: "Probleme" }]} />
+          <Segmented<Filter> label="Filter" value={filter} onChange={setFilter} options={[{ value: "all", label: `Alle (${accounts.length})` }, { value: "active", label: "Workflow an" }, { value: "paused", label: "Workflow aus" }, { value: "issues", label: "Probleme" }]} />
         </div>
         <Link href="/account" className="btn btn-primary ml-auto w-full sm:w-auto"><Plus size={18} /> Neuer Account</Link>
       </div>
@@ -72,7 +72,7 @@ export default function AccountsPage() {
                     <TonePill tone={issue.tone}>{issue.label}</TonePill>
                   </header>
                   <dl className="grid grid-cols-[88px_1fr] gap-y-1.5">
-                    <dt className="text-ink-3">Zeiten</dt><dd className="truncate text-ink tabular">{parseTimes(a.posting_times).join(", ") || "–"}</dd>
+                    <dt className="text-ink-3">Zeiten</dt><dd className="truncate text-ink tabular">{scheduleLabel(a)}</dd>
                     <dt className="text-ink-3">Nächster</dt><dd className="text-ink tabular">{a.active ? formatSlot(a.next_slot) : "–"}</dd>
                     <dt className="text-ink-3">Vorrat</dt><dd className="text-ink">{ready} {ready === 1 ? "Video" : "Videos"} bereit</dd>
                   </dl>
@@ -83,7 +83,7 @@ export default function AccountsPage() {
                   </div>
                 </Link>
                 <footer className="flex items-center justify-between border-t border-line px-4 py-3 md:px-6">
-                  <Switch checked={a.active} onChange={(v) => toggle(a, v)}>Aktiv</Switch>
+                  <Switch checked={a.active} onChange={(v) => toggle(a, v)}>Workflow</Switch>
                   <Link href={`/account?id=${a.id}`} className="btn btn-sm">Öffnen <ChevronRight size={14} /></Link>
                 </footer>
               </article>

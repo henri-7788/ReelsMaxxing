@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import threading
+from datetime import datetime, timedelta
 from urllib.parse import urlencode
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -16,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import db, events, instagram, pipeline, presets, reddit, scheduler, stats, system
+from . import autopilot, db, events, instagram, pipeline, presets, reddit, scheduler, stats, system
 from .config import settings
 from .reddit import RedditError
 
@@ -31,6 +32,7 @@ async def lifespan(_app: FastAPI):
     db.init_db()
     pipeline.cleanup_media()
     system.start_sampler()
+    autopilot.start()
     yield
 
 
@@ -96,6 +98,8 @@ class ResultBody(BaseModel):
 @app.get("/api/due", dependencies=[Depends(require_api_key)])
 def api_due():
     system.mark_n8n_poll()
+    if autopilot.enabled():
+        return {"due": []}  # the built-in autopilot posts; n8n must not post the same slots again
     return {"due": scheduler.due_accounts()}
 
 
@@ -223,6 +227,9 @@ class AccountBody(BaseModel):
     access_token: str = ""  # empty = keep the stored token
     active: bool = True
     posting_times: str = "18:00"
+    schedule_mode: str = "times"  # "times" (fixed daily times) or "interval" (every X hours)
+    interval_hours: float = 6
+    interval_start: str = "08:00"
     caption_template: str = "{title}"
     hashtags: str = ""
     hook_enabled: bool = True
@@ -375,7 +382,9 @@ def ui_settings():
         "ui_auth": bool(settings.ui_user),
         "render": {"encoder": settings.encoder, "x264_preset": settings.x264_preset, "width": 1080, "height": 1920,
                    "loudness_lufs": -14, "preset_defaults": presets.DEFAULTS},
-        "automation": {"slot_window_minutes": settings.slot_window_minutes,
+        "automation": {"mode": settings.automation, "render_minutes": autopilot.render_estimate_seconds() // 60,
+                       "render_lead_minutes": settings.render_lead_minutes, "plan_hours": settings.plan_hours,
+                       "slot_window_minutes": settings.slot_window_minutes,
                        "max_attempts_per_slot": scheduler.MAX_ATTEMPTS_PER_SLOT,
                        "media_retention_hours": settings.media_retention_hours},
         "timezone": settings.timezone,
@@ -409,17 +418,67 @@ def ui_account(account_id: int):
 
 def _save(body: AccountBody, account_id: int | None) -> dict:
     try:
-        scheduler.parse_times(body.posting_times)
+        scheduler.validate(body.schedule_mode, body.posting_times, body.interval_hours, body.interval_start)
     except ValueError as e:
         raise HTTPException(400, str(e))
-    data = {"name": body.name.strip(), "ig_user_id": body.ig_user_id.strip(), "active": int(body.active),
-            "posting_times": body.posting_times.strip(), "caption_template": body.caption_template.replace("\r\n", "\n"),
+    start = ""
+    if body.schedule_mode == "interval":
+        hh, mm = scheduler.parse_time(body.interval_start)
+        start = f"{hh:02d}:{mm:02d}"
+    data = {"name": body.name.strip(), "ig_user_id": body.ig_user_id.strip(),
+            "posting_times": body.posting_times.strip(), "schedule_mode": body.schedule_mode,
+            "interval_hours": round(body.interval_hours, 2), **({"interval_start": start} if start else {}), "caption_template": body.caption_template.replace("\r\n", "\n"),
             "hashtags": body.hashtags.strip(), "hook_enabled": int(body.hook_enabled)}
     if body.access_token.strip():
         # Pasted manually: expiry unknown
         data.update(access_token=body.access_token.strip(), token_expires_at="", token_refreshed_at="")
     new_id = db.save_account(data, account_id)
+    db.set_workflow(new_id, body.active)
     return _public_account(db.get_account(new_id))
+
+
+class WorkflowBody(BaseModel):
+    on: bool
+
+
+@ui.put("/accounts/{account_id}/workflow")
+def ui_account_workflow(account_id: int, body: WorkflowBody):
+    """Workflow switch: on = the autopilot fetches, renders and posts this account by itself."""
+    _account_or_404(account_id)
+    db.set_workflow(account_id, body.on)
+    return _public_account(db.get_account(account_id))
+
+
+@ui.get("/plan")
+def ui_plan(start: str = "", days: int = 7, account_id: int | None = None):
+    """Posting slots and planned render blocks for the calendar, from start (YYYY-MM-DD) for days."""
+    now = scheduler.now_local()
+    try:
+        first = datetime.strptime(start, "%Y-%m-%d").replace(tzinfo=scheduler.tz()) if start else now.replace(hour=0, minute=0, second=0, microsecond=0)
+    except ValueError:
+        raise HTTPException(400, "start muss YYYY-MM-DD sein")
+    last = first + timedelta(days=max(1, min(days, 62)))
+    slots = []
+    for a in db.list_accounts():
+        if account_id not in (None, a["id"]) or not a["active"]:
+            continue
+        since = max(first, now - timedelta(minutes=settings.slot_window_minutes))
+        slots += [{"account_id": a["id"], "slot": scheduler.slot_key(t)} for t in scheduler.slots_between(a, since, last)]
+    slots.sort(key=lambda x: (x["slot"], x["account_id"]))
+    out = {"slots": slots, "now": now.isoformat(timespec="seconds"), "automation": settings.automation,
+           "renders": [], "blocked": [], "render_minutes": None, "lead_minutes": settings.render_lead_minutes}
+    if autopilot.enabled() and last > now:
+        plan = autopilot.plan(now, until=min(last, now + timedelta(days=14)))
+        out.update(plan)
+        lo, hi = first.isoformat(), last.isoformat()
+        out["renders"] = [r for r in plan["renders"] if account_id in (None, r["account_id"]) and r["end"] >= lo and r["start"] < hi]
+        out["blocked"] = [b for b in plan["blocked"] if account_id in (None, b["account_id"])]
+    return out
+
+
+@ui.get("/autopilot")
+def ui_autopilot(account_id: int | None = None):
+    return autopilot.state(account_id)
 
 
 @ui.post("/accounts")

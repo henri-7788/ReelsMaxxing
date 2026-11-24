@@ -58,6 +58,7 @@ def _build(account: dict, item: dict, slot: str | None) -> tuple[int, str, str, 
     """Download and render one Reddit video. Returns (post id, media file, caption, muted)."""
     post_id = db.create_post(account["id"], item, slot)
     work = settings.work_dir / f"post-{post_id}"
+    started = time.monotonic()
     events.set_progress(post_id, "download")
     try:
         video, audio = reddit.download(item["video"], work)
@@ -72,7 +73,8 @@ def _build(account: dict, item: dict, slot: str | None) -> tuple[int, str, str, 
         render.render(video, audio, settings.media_dir / media_file, hook, credit, work, style=style,
                       on_progress=lambda stage, pct: events.set_progress(post_id, stage, pct))
         caption = build_caption(account["caption_template"], item, account["hashtags"])
-        db.update_post(post_id, status="ready", media_file=media_file, caption=caption, muted=int(muted))
+        db.update_post(post_id, status="ready", media_file=media_file, caption=caption, muted=int(muted),
+                       render_seconds=round(time.monotonic() - started, 1))
     except Exception as e:
         db.update_post(post_id, status="failed", error=str(e)[:1000])
         raise

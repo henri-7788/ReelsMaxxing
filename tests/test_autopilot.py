@@ -1,0 +1,165 @@
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+import pytest
+
+from app import autopilot, db, pipeline, scheduler
+from app.config import settings
+
+TZ = ZoneInfo("Europe/Berlin")
+NOW = datetime(2026, 11, 24, 6, 0, tzinfo=TZ)
+
+
+@pytest.fixture(autouse=True)
+def plan_settings(monkeypatch):
+    monkeypatch.setattr(settings, "automation", "internal")
+    monkeypatch.setattr(settings, "render_minutes", 10)
+    monkeypatch.setattr(settings, "render_lead_minutes", 15)
+    monkeypatch.setattr(settings, "plan_hours", 24)
+    autopilot._attempts.clear()
+    autopilot._last_error.clear()
+    autopilot._running = None
+
+
+def account(name="A", **kw):
+    data = {"name": name, "ig_user_id": "1", "access_token": "t", "posting_times": "18:00", **kw}
+    aid = db.save_account(data)
+    db.add_source(aid, {"subreddit": "aww"})
+    db.execute("UPDATE accounts SET active = 1, workflow_since = '' WHERE id = ?", (aid,))
+    return aid
+
+
+def test_interval_slots_continue_across_midnight():
+    acc = {"schedule_mode": "interval", "interval_hours": 5, "interval_start": "08:00"}
+    got = [scheduler.slot_key(t) for t in scheduler.slots_between(acc, datetime(2026, 11, 24, 0, 0, tzinfo=TZ),
+                                                                  datetime(2026, 11, 25, 12, 0, tzinfo=TZ))]
+    # Every 5 h from 2024-01-01 08:00 keeps its rhythm instead of restarting each day
+    assert all((datetime.strptime(b, "%Y-%m-%d %H:%M") - datetime.strptime(a, "%Y-%m-%d %H:%M")) == timedelta(hours=5)
+               for a, b in zip(got, got[1:]))
+    assert len(got) == 7  # 36 h / 5 h
+
+
+def test_interval_every_6h_from_start():
+    acc = {"schedule_mode": "interval", "interval_hours": 6, "interval_start": "08:00"}
+    got = [scheduler.slot_key(t)[11:] for t in scheduler.slots_between(acc, datetime(2026, 11, 24, 0, 0, tzinfo=TZ),
+                                                                       datetime(2026, 11, 25, 0, 0, tzinfo=TZ))]
+    assert got == ["02:00", "08:00", "14:00", "20:00"]
+    assert scheduler.next_slot(acc, datetime(2026, 11, 24, 14, 0, tzinfo=TZ)) == "2026-11-24 20:00"
+
+
+def test_validate_interval():
+    scheduler.validate("interval", "", 2, "07:30")
+    with pytest.raises(ValueError):
+        scheduler.validate("interval", "", 0.1, "07:30")
+    with pytest.raises(ValueError):
+        scheduler.validate("interval", "", 3, "nope")
+
+
+def _blocks(plan):
+    return [(datetime.fromisoformat(r["start"]), datetime.fromisoformat(r["end"]), r) for r in plan["renders"]]
+
+
+def test_plan_never_overlaps_across_accounts():
+    account("A", posting_times="18:00, 18:05, 12:00")
+    account("B", posting_times="18:00")
+    account("C", schedule_mode="interval", interval_hours=1, interval_start="17:00")
+    plan = autopilot.plan(NOW)
+    blocks = sorted(_blocks(plan))
+    assert blocks
+    for (s1, e1, _), (s2, e2, _) in zip(blocks, blocks[1:]):
+        assert e1 <= s2, "Render-Blöcke überlappen"
+    for s, e, r in blocks:
+        assert e - s == timedelta(minutes=10)
+        assert s >= NOW
+        if r["slot"] > "2026-11-24 06:25":  # enough time ahead: done 15 min before the slot
+            assert e <= scheduler.parse_slot(r["slot"]) - timedelta(minutes=15)
+            assert r["state"] == "planned"
+    assert len(blocks) == len({(r["account_id"], r["slot"]) for *_, r in blocks})
+
+
+def test_plan_pushes_past_blocks_to_now_and_marks_late():
+    account("A", posting_times="06:10")
+    account("B", posting_times="06:10")
+    plan = autopilot.plan(NOW)
+    first, second = plan["renders"][:2]
+    assert datetime.fromisoformat(first["start"]) == NOW
+    assert first["end"] == second["start"]
+    assert second["state"] == "late"  # only one encode at a time: the second one misses 06:10
+
+
+def test_plan_skips_taken_switched_on_later_and_unconnected():
+    a = account("A", posting_times="05:50, 18:00")
+    db.create_post(a, {"id": "x", "subreddit": "aww", "title": "t", "author": "u", "permalink": "/"}, "2026-11-24 18:00")
+    b = account("B", posting_times="05:55")
+    db.execute("UPDATE accounts SET workflow_since = ? WHERE id = ?", ("2026-11-24T05:58:00+01:00", b))
+    c = db.save_account({"name": "C", "posting_times": "19:00", "active": 1})
+    plan = autopilot.plan(NOW)
+    slots = {(r["account_id"], r["slot"]) for r in plan["renders"]}
+    assert (a, "2026-11-24 05:50") in slots  # still inside the slot window: rendered late
+    assert (a, "2026-11-24 18:00") not in slots
+    assert not any(acc == b for acc, _ in slots if _ < "2026-11-25")
+    assert plan["blocked"][0]["account_id"] == c
+
+
+def test_paused_account_not_planned():
+    a = account("A")
+    db.set_workflow(a, False)
+    assert autopilot.plan(NOW)["renders"] == []
+    db.set_workflow(a, True)
+    assert db.get_account(a)["workflow_since"]
+
+
+def test_next_job_and_run(monkeypatch):
+    a = account("A", posting_times="06:20")
+    calls = []
+    monkeypatch.setattr(pipeline, "prepare", lambda aid, slot: calls.append((aid, slot)) or {"post_id": 1})
+    job = autopilot.next_job(NOW)
+    assert job and job["slot"] == "2026-11-24 06:20"
+    autopilot.run_job(job, NOW)
+    assert calls == [(a, "2026-11-24 06:20")]
+    # Tried just now: no second attempt before the retry pause
+    assert autopilot.next_job(NOW) is None
+
+
+def test_failed_render_is_retried_later(monkeypatch):
+    account("A", posting_times="06:20")
+
+    def boom(*_):
+        raise pipeline.NothingFound("nichts")
+    monkeypatch.setattr(pipeline, "prepare", boom)
+    autopilot.run_job(autopilot.next_job(NOW), NOW)
+    assert autopilot.state()["last_errors"]
+    key = next(iter(autopilot._attempts))
+    autopilot._attempts[key] = (1, 0.0)
+    assert autopilot.next_job(NOW) is not None
+
+
+def test_publish_due(monkeypatch):
+    a = account("A", posting_times="06:00")
+    pid = db.create_post(a, {"id": "x", "subreddit": "aww", "title": "t", "author": "u", "permalink": "/"}, "2026-11-24 06:00")
+    db.update_post(pid, status="ready", media_file="x.mp4")
+    early = db.create_post(a, {"id": "y", "subreddit": "aww", "title": "t", "author": "u", "permalink": "/"}, "2026-11-24 09:00")
+    db.update_post(early, status="ready", media_file="y.mp4")
+    published = []
+    monkeypatch.setattr(pipeline, "publish", lambda post_id: published.append(post_id) or {"status": "published"})
+    assert autopilot.publish_due(NOW + timedelta(minutes=1)) == 1
+    assert published == [pid]
+    assert autopilot.publish_due(NOW + timedelta(hours=2)) == 0  # window of 06:00 is over; 09:00 not yet
+
+
+def test_api_interval_workflow_and_plan():
+    from fastapi.testclient import TestClient
+    from app.main import app
+    c = TestClient(app)
+    body = {"name": "X", "active": False, "posting_times": "", "schedule_mode": "interval",
+            "interval_hours": 3, "interval_start": "7:5"}
+    acc = c.post("/ui-api/accounts", json=body).json()
+    assert acc["schedule_mode"] == "interval" and acc["interval_start"] == "07:05" and acc["active"] is False
+    assert c.post("/ui-api/accounts", json={**body, "interval_hours": 0}).status_code == 400
+    acc = c.put(f"/ui-api/accounts/{acc['id']}/workflow", json={"on": True}).json()
+    assert acc["active"] is True and acc["next_slot"]
+    plan = c.get("/ui-api/plan", params={"days": 2}).json()
+    assert len(plan["slots"]) >= 8
+    assert plan["blocked"][0]["reason"] == "nicht mit Instagram verbunden"
+    # The built-in autopilot posts: n8n gets nothing to do
+    assert c.get("/api/due", headers={"X-API-Key": "test-key"}).json() == {"due": []}

@@ -1,12 +1,12 @@
 "use client"
 
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock, TriangleAlert } from "lucide-react"
+import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock, Cog, TriangleAlert } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { usePostDrawer, VideoDrawer } from "@/components/posts"
 import { AccountDot, Card, EmptyState, ErrorState, Segmented, SkeletonRows, StatusPill } from "@/components/ui/kit"
-import { accountColor, dayKey, parseTimes, type Account, type Post } from "@/lib/api"
-import { useData, useIsMobile } from "@/lib/data"
+import { accountColor, dayKey, dayTimes, type Account, type Plan, type Post, type RenderBlock } from "@/lib/api"
+import { useApi, useData, useIsMobile } from "@/lib/data"
 
 type View = "week" | "month" | "list"
 type Slot = { date: string; time: string; account: Account; post?: Post; past: boolean }
@@ -24,8 +24,23 @@ function addDays(d: Date, n: number) {
   return x
 }
 
-/** Slots are daily times per account. Past days only show what really ran (posts with that slot). */
-function slotsFor(day: Date, accounts: Account[], posts: Post[], now: Date): Slot[] {
+const hhmm = (d: Date) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`
+
+/** Render blocks of the plan that start on this day (the plan is in the server's time zone, shown in the browser's). */
+function rendersFor(day: Date, plan: Plan | null, accounts: Account[]): (RenderBlock & { time: string; account: Account })[] {
+  if (!plan) return []
+  const key = dayKey(day)
+  const out = []
+  for (const r of plan.renders) {
+    const start = new Date(r.start)
+    const account = accounts.find((a) => a.id === r.account_id)
+    if (account && dayKey(start) === key) out.push({ ...r, time: hhmm(start), account })
+  }
+  return out
+}
+
+/** Slots per account: the server plan (fixed times or "every X hours"). Past days only show what really ran (posts with that slot). */
+function slotsFor(day: Date, accounts: Account[], posts: Post[], now: Date, plan: Plan | null): Slot[] {
   const date = dayKey(day)
   const today = dayKey(now)
   const hm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
@@ -37,10 +52,46 @@ function slotsFor(day: Date, accounts: Account[], posts: Post[], now: Date): Slo
       seen.add(p.slot)
       out.push({ date, time: p.slot.slice(11), account: a, post: p, past: date < today || (date === today && p.slot.slice(11) <= hm) })
     }
-    if (date >= today && a.active)
-      for (const t of parseTimes(a.posting_times)) if (!seen.has(`${date} ${t}`)) out.push({ date, time: t, account: a, past: date === today && t <= hm })
+    if (date >= today && a.active) {
+      const planned = plan ? plan.slots.filter((s) => s.account_id === a.id && s.slot.startsWith(date)).map((s) => s.slot.slice(11)) : dayTimes(a, day)
+      for (const t of planned) if (!seen.has(`${date} ${t}`)) out.push({ date, time: t, account: a, past: date === today && t <= hm })
+    }
   }
   return out.sort((x, y) => x.time.localeCompare(y.time) || x.account.name.localeCompare(y.account.name))
+}
+
+function RenderChip({ r }: { r: RenderBlock & { time: string; account: Account } }) {
+  const end = hhmm(new Date(r.end))
+  const label = r.state === "running" ? "rendert gerade" : r.state === "late" ? "knapp, wird direkt nach dem Rendern gepostet" : "Rendern geplant"
+  return (
+    <span className={`flex h-5 w-full items-center gap-1.5 rounded-[6px] border border-dashed pl-2 pr-1.5 text-[11px] ${r.state === "late" ? "border-warning" : "border-line-strong"} ${r.state === "running" ? "bg-primary-50" : ""}`}
+      title={`${r.time}–${end} ${r.account.name}: ${label} (Post ${r.slot.slice(11)})`}>
+      <Cog size={12} className={`flex-none ${r.state === "running" ? "animate-spin text-primary-600" : "text-ink-3"}`} aria-hidden="true" />
+      <span className="tabular text-ink-2">{r.time}</span>
+      <span className="min-w-0 flex-1 truncate text-ink-3">Render · {r.account.name}</span>
+    </span>
+  )
+}
+
+/** Current time as a line between the entries of today's hour cell, placed by time like everything else. */
+function NowLine({ time }: { time: string }) {
+  return (
+    <div className="flex items-center gap-1" role="separator" aria-label={`Jetzt ${time}`}>
+      <span className="rounded-[4px] bg-danger px-1 text-[10px] font-semibold leading-4 text-white tabular">{time}</span>
+      <span className="h-0.5 flex-1 rounded-full bg-danger" />
+    </div>
+  )
+}
+
+type Entry = { kind: "slot"; time: string; s: Slot } | { kind: "render"; time: string; r: RenderBlock & { time: string; account: Account } } | { kind: "now"; time: string }
+
+/** Day list: posting slots and render blocks by time, with a "now" marker on today. */
+function listEntries(slots: Slot[], renders: (RenderBlock & { time: string; account: Account })[], now: string | null): Entry[] {
+  const out: Entry[] = [...slots.map((s) => ({ kind: "slot" as const, time: s.time, s })), ...renders.map((r) => ({ kind: "render" as const, time: r.time, r }))]
+  if (now) out.push({ kind: "now", time: now })
+  // At the same minute: what already happened first, then "now"
+  const rank = { slot: 0, render: 1, now: 2 }
+  return out.sort((x, y) => x.time.localeCompare(y.time) || rank[x.kind] - rank[y.kind])
 }
 
 function SlotIcon({ s }: { s: Slot }) {
@@ -73,21 +124,28 @@ export default function CalendarPage() {
   const [anchor, setAnchor] = useState(() => new Date())
   const [now, setNow] = useState(() => new Date())
   const scroller = useRef<HTMLDivElement>(null)
+  const nowRow = useRef<HTMLDivElement>(null)
   const scope = useMemo(() => (account ? [account] : accounts), [account, accounts])
   const effective: View = mobile && view === "week" ? "list" : view
 
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60_000)
+    const t = setInterval(() => setNow(new Date()), 30_000)
     return () => clearInterval(t)
   }, [])
   useEffect(() => {
-    if (effective === "week" && scroller.current) scroller.current.scrollTop = 7 * ROW
-  }, [effective, overview])
+    // Start with the current time in view (two hours above it), like other calendars
+    if (effective !== "week" || !scroller.current) return
+    const row = nowRow.current
+    scroller.current.scrollTop = row ? Math.max(0, row.offsetTop - 2 * ROW) : 7 * ROW
+  }, [effective, overview]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const start = effective === "month" ? monday(new Date(anchor.getFullYear(), anchor.getMonth(), 1)) : monday(anchor)
   const count = effective === "month" ? 42 : 7
   const days = useMemo(() => Array.from({ length: count }, (_, i) => addDays(start, i)), [start.getTime(), count]) // eslint-disable-line react-hooks/exhaustive-deps
-  const byDay = useMemo(() => days.map((d) => slotsFor(d, scope, allPosts, now)), [days, scope, allPosts, now])
+  const planPath = `/plan?start=${dayKey(days[0])}&days=${count}${account ? `&account_id=${account.id}` : ""}`
+  const { data: plan } = useApi<Plan>(planPath, 60_000)
+  const byDay = useMemo(() => days.map((d) => slotsFor(d, scope, allPosts, now, plan)), [days, scope, allPosts, now, plan])
+  const rendersByDay = useMemo(() => days.map((d) => rendersFor(d, plan, scope)), [days, plan, scope])
   const step = (dir: number) => setAnchor((a) => (effective === "month" ? new Date(a.getFullYear(), a.getMonth() + dir, 1) : addDays(a, dir * 7)))
   const title = effective === "month"
     ? anchor.toLocaleDateString("de-DE", { month: "long", year: "numeric" })
@@ -128,25 +186,38 @@ export default function CalendarPage() {
             ))}
           </div>
           <div ref={scroller} className="relative max-h-[640px] overflow-y-auto">
+            {/* One grid row per hour across all days, so the rows stay aligned however many entries a day has */}
             <div className="grid grid-cols-[48px_repeat(7,minmax(0,1fr))]">
-              <div>
-                {Array.from({ length: 24 }, (_, h) => <div key={h} className="caption pr-2 pt-1 text-right tabular" style={{ minHeight: ROW }}>{String(h).padStart(2, "0")}:00</div>)}
-              </div>
-              {days.map((d, i) => (
-                <div key={i} className="relative border-l border-line">
-                  {Array.from({ length: 24 }, (_, h) => {
-                    const here = byDay[i].filter((s) => +s.time.slice(0, 2) === h)
+              {Array.from({ length: 24 }, (_, h) => {
+                const nowHour = h === now.getHours() && days.some((x) => dayKey(x) === today)
+                return [
+                  <div key={`g${h}`} ref={nowHour ? nowRow : undefined} className={`caption border-t border-line pr-2 pt-1 text-right tabular ${nowHour ? "!font-semibold !text-danger" : ""}`} style={{ minHeight: ROW }}>
+                    {String(h).padStart(2, "0")}:00
+                  </div>,
+                  ...days.map((d, i) => {
+                    const isToday = dayKey(d) === today
+                    const entries = listEntries(
+                      byDay[i].filter((s) => +s.time.slice(0, 2) === h),
+                      rendersByDay[i].filter((r) => +r.time.slice(0, 2) === h),
+                      isToday && nowHour ? hhmm(now) : null,
+                    )
                     return (
-                      <div key={h} className="flex flex-col gap-1 border-t border-line p-1" style={{ minHeight: ROW }}>
-                        {here.map((s) => <SlotChip key={`${s.account.id}-${s.time}`} s={s} onOpen={drawer.open} />)}
+                      <div key={`${h}-${i}`} className={`flex flex-col gap-1 border-l border-t border-line p-1 ${isToday ? "bg-primary-50/40" : ""}`} style={{ minHeight: ROW }}>
+                        {entries.map((e) => e.kind === "now" ? <NowLine key="now" time={e.time} />
+                          : e.kind === "render" ? <RenderChip key={`r-${e.r.account_id}-${e.r.slot}`} r={e.r} />
+                          : <SlotChip key={`${e.s.account.id}-${e.s.time}`} s={e.s} onOpen={drawer.open} />)}
                       </div>
                     )
-                  })}
-                </div>
-              ))}
+                  }),
+                ]
+              })}
             </div>
           </div>
-          <p className="caption border-t border-line px-4 py-2.5">Aktuelle Uhrzeit: {now.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })} · Durchgestrichen = Slot ohne Post. Zeiten ändern: Slot anklicken.</p>
+          <p className="caption flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-4 py-2.5">
+            <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 bg-danger" /> Jetzt {hhmm(now)}</span>
+            <span className="flex items-center gap-1.5"><Cog size={12} /> Render-Block{plan?.render_minutes ? ` (${plan.render_minutes} min, nie gleichzeitig)` : ""}</span>
+            <span>Durchgestrichen = Slot ohne Post. Zeiten ändern: Slot anklicken.</span>
+          </p>
         </Card>
       ) : effective === "month" ? (
         <Card pad={false} className="overflow-hidden">
@@ -174,9 +245,20 @@ export default function CalendarPage() {
               <h3 className={`card-title border-b border-line px-4 py-3 ${dayKey(d) === today ? "text-primary-700" : ""}`}>
                 {d.toLocaleDateString("de-DE", { weekday: "long", day: "numeric", month: "long" })}{dayKey(d) === today ? " · heute" : ""}
               </h3>
-              {byDay[i].length === 0 ? <p className="caption px-4 py-4">Keine Slots</p> : (
+              {byDay[i].length === 0 && rendersByDay[i].length === 0 ? <p className="caption px-4 py-4">Keine Slots</p> : (
                 <ul className="divide-y divide-line">
-                  {byDay[i].map((s) => (
+                  {listEntries(byDay[i], rendersByDay[i], dayKey(d) === today ? hhmm(now) : null).map((e) => e.kind === "now" ? (
+                    <li key="now" className="flex items-center gap-2 px-4 py-1" aria-label={`Jetzt ${e.time}`}>
+                      <span className="rounded-[4px] bg-danger px-1 text-[10px] font-semibold leading-4 text-white tabular">{e.time}</span>
+                      <span className="h-0.5 flex-1 bg-danger" />
+                    </li>
+                  ) : e.kind === "render" ? (
+                    <li key={`r-${e.r.account_id}-${e.r.slot}`} className="flex items-center gap-3 px-4 py-2">
+                      <span className="w-12 flex-none text-ink-2 tabular">{e.r.time}</span>
+                      <span className="caption flex min-w-0 flex-1 items-center gap-2"><Cog size={14} className={e.r.state === "running" ? "animate-spin text-primary-600" : ""} /> Rendern für {e.r.account.name} (Post {e.r.slot.slice(11)})</span>
+                      {e.r.state !== "planned" && <span className={`caption ${e.r.state === "late" ? "!text-warning" : ""}`}>{e.r.state === "running" ? "läuft" : "knapp"}</span>}
+                    </li>
+                  ) : ((s) => (
                     <li key={`${s.account.id}-${s.time}`}>
                       <button type="button" disabled={!s.post} onClick={() => s.post && drawer.open(s.post)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left enabled:hover:bg-hover disabled:cursor-default">
                         <span className="w-12 flex-none font-semibold text-ink tabular">{s.time}</span>
@@ -187,7 +269,7 @@ export default function CalendarPage() {
                         {s.post ? <StatusPill post={s.post} /> : <span className="caption">{s.past ? "kein Post" : "noch kein Video"}</span>}
                       </button>
                     </li>
-                  ))}
+                  ))(e.s))}
                 </ul>
               )}
             </Card>

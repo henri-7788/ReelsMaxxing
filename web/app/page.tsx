@@ -7,7 +7,7 @@ import { MiniPcCard, PerformanceCard, PostingTimesCard, statsPath } from "@/comp
 import { KpiCard, type Kpi } from "@/components/charts/KpiCard"
 import { pipelineCounts, PostTable, usePostDrawer, VideoDrawer } from "@/components/posts"
 import { AccountDot, Banner, Card, CardHeader, EmptyState, SkeletonRows, StatusPill } from "@/components/ui/kit"
-import { dayKey, parseTimes, trend, type Account, type Post, type Stats } from "@/lib/api"
+import { dayKey, dayTimes, trend, type Account, type Post, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 
 type Slot = { key: string; time: string; day: "heute" | "morgen"; account: Account; post?: Post }
@@ -15,11 +15,13 @@ type Slot = { key: string; time: string; day: "heute" | "morgen"; account: Accou
 function upcomingSlots(accounts: Account[], posts: Post[], limit: number): { next: Slot[]; today: Slot[] } {
   const now = new Date()
   const hm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`
-  const days: [string, "heute" | "morgen"][] = [[dayKey(now), "heute"], [dayKey(new Date(now.getTime() + 86_400_000)), "morgen"]]
+  const tomorrow = new Date(now.getTime() + 86_400_000)
+  const days: [Date, "heute" | "morgen"][] = [[now, "heute"], [tomorrow, "morgen"]]
   const all: Slot[] = []
-  for (const [date, day] of days)
+  for (const [d, day] of days)
     for (const a of accounts.filter((x) => x.active))
-      for (const t of parseTimes(a.posting_times)) {
+      for (const t of dayTimes(a, d)) {
+        const date = dayKey(d)
         const key = `${date} ${t}`
         all.push({ key, time: t, day, account: a, post: posts.find((p) => p.account_id === a.id && p.slot === key) })
       }

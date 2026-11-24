@@ -38,7 +38,7 @@ export function AccountSwitcher({ compact = false }: { compact?: boolean }) {
           <span className="block truncate font-semibold text-ink">{account ? account.name : "Alle Accounts"}</span>
           {!compact && (
             <span className="caption block truncate">
-              {account ? (account.active ? `Nächster: ${formatSlot(account.next_slot)}` : "pausiert") : `${accounts.length} Accounts · ${active} aktiv`}
+              {account ? (account.active ? `Nächster: ${formatSlot(account.next_slot)}` : "Workflow aus") : `${accounts.length} Accounts · ${active} mit Workflow`}
             </span>
           )}
         </span>

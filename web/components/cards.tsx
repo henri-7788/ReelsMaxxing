@@ -7,7 +7,7 @@ import { AreaChart, type Point } from "@/components/charts/AreaChart"
 import { Heatmap } from "@/components/charts/Heatmap"
 import { RingGauge } from "@/components/charts/RingGauge"
 import { Card, CardHeader, EmptyState, ErrorState, Segmented, Skeleton } from "@/components/ui/kit"
-import { fmtBytes, parseTimes, relTime, type Account, type Stats, type SystemInfo } from "@/lib/api"
+import { fmtBytes, dayTimes, relTime, type Account, type Stats, type SystemInfo } from "@/lib/api"
 import { useApi } from "@/lib/data"
 
 const MONTHS = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"]
@@ -82,7 +82,7 @@ export function PerformanceCard({ accountId, className = "", footerLink = true, 
 export function PostingTimesCard({ accountId, account, className = "" }: { accountId: number | null; account: Account | null; className?: string }) {
   const [table, setTable] = useState(false)
   const { data, error, loading, reload } = useApi<Stats>(statsPath(accountId, 30), 60_000)
-  const slots = useMemo(() => (account ? [...new Set(parseTimes(account.posting_times).map((t) => +t.slice(0, 2)))] : []), [account])
+  const slots = useMemo(() => (account ? [...new Set(dayTimes(account).map((t) => +t.slice(0, 2)))] : []), [account])
   const any = data?.heatmap.some((r) => r.some((v) => v > 0))
   return (
     <Card className={className}>

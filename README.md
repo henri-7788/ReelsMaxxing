@@ -47,6 +47,30 @@ Fehler → n8n-Error-Workflow → E-Mail
 6. **GPU-Encoding (optional)**: `ENCODER=vaapi` setzen und im Compose `devices: /dev/dri`
    einkommentieren. Klappt es nicht, wird automatisch auf CPU (libx264) zurückgefallen.
 
+## Autopilot (Workflow pro Account)
+
+Jeder Account hat einen Schalter **Workflow** (Account-Seite oben, Account-Liste). Ist er an,
+läuft alles von selbst im Container: Reddit-Video holen, rendern und zur Posting-Zeit über die
+Graph API posten. n8n ist dafür nicht nötig.
+
+* **Veröffentlichung**: entweder *Feste Uhrzeiten* (täglich) oder *Alle X Stunden* ab einer
+  Startzeit (0,5–168 h). Der Rhythmus läuft über Mitternacht weiter.
+* **Render-Planung**: Für jede kommende Posting-Zeit wird ein Render-Block reserviert, der
+  `RENDER_LEAD_MINUTES` (15) vor dem Posten fertig ist. Die Blöcke werden rückwärts von der
+  letzten Posting-Zeit verteilt und überlappen nie, auch nicht zwischen Accounts: der Mini-PC
+  rendert immer nur ein Video. Die Blockgröße ist mindestens `RENDER_MINUTES` (10) und wächst mit
+  den gemessenen Renderzeiten (1,5 × Median). Geplant wird `PLAN_HOURS` (48) im Voraus.
+* Ist ein Block zu knapp (z. B. zwei Accounts zur selben Minute), wird er sofort gerendert und
+  direkt danach gepostet, solange das Slot-Fenster offen ist. Schlägt ein Render fehl, gibt es
+  nach 10 Minuten einen zweiten Versuch.
+* Eingeschaltet zählt ab jetzt: verpasste Slots von vorher werden nicht nachgeholt.
+* Der Kalender zeigt die Posting-Zeiten, die geplanten Render-Blöcke und eine rote Jetzt-Linie.
+* Nach dem Update sind alle Accounts zunächst **aus** (der Schalter hieß früher „Aktiv“ und
+  bedeutete nur „n8n darf posten“). Pro Account einmal einschalten.
+* Wer weiter n8n nutzen will: `AUTOMATION=n8n` setzen. Dann ist der Autopilot aus und
+  `/api/due` funktioniert wie bisher. Im Standard (`internal`) liefert `/api/due` immer eine
+  leere Liste, damit nichts doppelt gepostet wird.
+
 ## Manuell starten
 
 Auf der Account-Seite startet **Start** (links neben „Vorschau rendern“) den Workflow sofort,
