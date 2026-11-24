@@ -62,13 +62,15 @@ function slotsFor(day: Date, accounts: Account[], posts: Post[], now: Date, plan
 
 function RenderChip({ r }: { r: RenderBlock & { time: string; account: Account } }) {
   const end = hhmm(new Date(r.end))
-  const label = r.state === "running" ? "rendert gerade" : r.state === "late" ? "knapp, wird direkt nach dem Rendern gepostet" : "Rendern geplant"
+  const label = r.state === "running" ? "rendert gerade"
+    : r.kind === "start" ? `Workflow-Start, Post ca. ${hhmm(new Date(r.post_at ?? r.end))}${r.state === "late" ? " (verschoben, Mini-PC belegt)" : ""}`
+    : r.state === "late" ? "knapp, wird direkt nach dem Rendern gepostet" : "Rendern geplant"
   return (
     <span className={`flex h-5 w-full items-center gap-1.5 rounded-[6px] border border-dashed pl-2 pr-1.5 text-[11px] ${r.state === "late" ? "border-warning" : "border-line-strong"} ${r.state === "running" ? "bg-primary-50" : ""}`}
-      title={`${r.time}–${end} ${r.account.name}: ${label} (Post ${r.slot.slice(11)})`}>
+      title={`${r.time}–${end} ${r.account.name}: ${label}${r.kind === "start" ? "" : ` (Post ${r.slot.slice(11)})`}`}>
       <Cog size={12} className={`flex-none ${r.state === "running" ? "animate-spin text-primary-600" : "text-ink-3"}`} aria-hidden="true" />
       <span className="tabular text-ink-2">{r.time}</span>
-      <span className="min-w-0 flex-1 truncate text-ink-3">Render · {r.account.name}</span>
+      <span className="min-w-0 flex-1 truncate text-ink-3">{r.kind === "start" ? "Start" : "Render"} · {r.account.name}</span>
     </span>
   )
 }
@@ -255,7 +257,7 @@ export default function CalendarPage() {
                   ) : e.kind === "render" ? (
                     <li key={`r-${e.r.account_id}-${e.r.slot}`} className="flex items-center gap-3 px-4 py-2">
                       <span className="w-12 flex-none text-ink-2 tabular">{e.r.time}</span>
-                      <span className="caption flex min-w-0 flex-1 items-center gap-2"><Cog size={14} className={e.r.state === "running" ? "animate-spin text-primary-600" : ""} /> Rendern für {e.r.account.name} (Post {e.r.slot.slice(11)})</span>
+                      <span className="caption flex min-w-0 flex-1 items-center gap-2"><Cog size={14} className={e.r.state === "running" ? "animate-spin text-primary-600" : ""} /> {e.r.kind === "start" ? `Workflow-Start ${e.r.account.name}, Post ca. ${hhmm(new Date(e.r.post_at ?? e.r.end))}` : `Rendern für ${e.r.account.name} (Post ${e.r.slot.slice(11)})`}</span>
                       {e.r.state !== "planned" && <span className={`caption ${e.r.state === "late" ? "!text-warning" : ""}`}>{e.r.state === "running" ? "läuft" : "knapp"}</span>}
                     </li>
                   ) : ((s) => (

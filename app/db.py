@@ -78,6 +78,8 @@ MIGRATIONS = (
     ("accounts", "interval_start", "TEXT NOT NULL DEFAULT '08:00'"),
     # Upper end of a random gap ("every 6-8 hours"); 0 = fixed gap of interval_hours
     ("accounts", "interval_hours_max", "REAL NOT NULL DEFAULT 0"),
+    # "Every X hours": local time of the first workflow run ('YYYY-MM-DD HH:MM'), the rhythm counts from here
+    ("accounts", "interval_anchor", "TEXT NOT NULL DEFAULT ''"),
     # When the workflow switch (active) was last turned on; the autopilot ignores older slots
     ("accounts", "workflow_since", "TEXT NOT NULL DEFAULT ''"),
     # Seconds from start of download to finished render, used to plan render times
@@ -173,7 +175,7 @@ def execute(sql: str, params=()) -> int:
 ACCOUNT_FIELDS = ("name", "ig_user_id", "access_token", "active", "posting_times",
                   "caption_template", "hashtags", "hook_enabled", "ig_username", "token_expires_at",
                   "token_refreshed_at", "client_business_id", "preset_id", "schedule_mode",
-                  "interval_hours", "interval_start", "interval_hours_max", "workflow_since")
+                  "interval_hours", "interval_start", "interval_hours_max", "interval_anchor", "workflow_since")
 
 
 def get_account(account_id: int) -> dict | None:

@@ -253,10 +253,10 @@ def _public_account(a: dict) -> dict:
     out["active"] = bool(a["active"])
     out["hook_enabled"] = bool(a["hook_enabled"])
     out["next_slot"] = scheduler.next_slot(a) if a["active"] else None
-    # Random "every X-Y hours" cannot be computed in the browser: send the next posting times along
+    # "Every X hours" depends on the stored anchor (and random gaps): send the next run times along
     out["upcoming_slots"] = ([scheduler.slot_key(t) for t in scheduler.slots_between(
         a, scheduler.now_local().replace(hour=0, minute=0, second=0, microsecond=0), scheduler.now_local() + timedelta(days=2))]
-        if a.get("schedule_mode") == "interval" and (a.get("interval_hours_max") or 0) > a["interval_hours"] else [])
+        if a.get("schedule_mode") == "interval" else [])
     # Profile picture: cached file, or fetchable because the account is connected. The UI falls back to the letter.
     version = instagram.avatar_version(a["id"])
     out["avatar_url"] = (f"/ui-api/accounts/{a['id']}/avatar?v={version or 0}"
@@ -439,7 +439,14 @@ def _save(body: AccountBody, account_id: int | None) -> dict:
     if body.access_token.strip():
         # Pasted manually: expiry unknown
         data.update(access_token=body.access_token.strip(), token_expires_at="", token_refreshed_at="")
+    old = db.get_account(account_id) if account_id else None
     new_id = db.save_account(data, account_id)
+    # "Every X hours" starts its rhythm at the next interval_start: when the start time or mode changes
+    # or the workflow is switched on (not on every save, so the running rhythm is kept)
+    if body.schedule_mode == "interval" and (
+            not old or not old["interval_anchor"] or old["schedule_mode"] != "interval"
+            or old["interval_start"] != start or (body.active and not old["active"])):
+        db.save_account({"interval_anchor": scheduler.next_anchor(start)}, new_id)
     db.set_workflow(new_id, body.active)
     return _public_account(db.get_account(new_id))
 
@@ -451,7 +458,10 @@ class WorkflowBody(BaseModel):
 @ui.put("/accounts/{account_id}/workflow")
 def ui_account_workflow(account_id: int, body: WorkflowBody):
     """Workflow switch: on = the autopilot fetches, renders and posts this account by itself."""
-    _account_or_404(account_id)
+    acc = _account_or_404(account_id)
+    if body.on and not acc["active"] and acc["schedule_mode"] == "interval":
+        # Fresh start: the first run is the next time interval_start comes
+        db.save_account({"interval_anchor": scheduler.next_anchor(acc["interval_start"])}, account_id)
     db.set_workflow(account_id, body.on)
     return _public_account(db.get_account(account_id))
 
