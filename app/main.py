@@ -230,6 +230,7 @@ class AccountBody(BaseModel):
     schedule_mode: str = "times"  # "times" (fixed daily times) or "interval" (every X hours)
     interval_hours: float = 6
     interval_start: str = "08:00"
+    interval_hours_max: float = 0  # > interval_hours: random gap between the two ("every 6-8 hours")
     caption_template: str = "{title}"
     hashtags: str = ""
     hook_enabled: bool = True
@@ -252,6 +253,10 @@ def _public_account(a: dict) -> dict:
     out["active"] = bool(a["active"])
     out["hook_enabled"] = bool(a["hook_enabled"])
     out["next_slot"] = scheduler.next_slot(a) if a["active"] else None
+    # Random "every X-Y hours" cannot be computed in the browser: send the next posting times along
+    out["upcoming_slots"] = ([scheduler.slot_key(t) for t in scheduler.slots_between(
+        a, scheduler.now_local().replace(hour=0, minute=0, second=0, microsecond=0), scheduler.now_local() + timedelta(days=2))]
+        if a.get("schedule_mode") == "interval" and (a.get("interval_hours_max") or 0) > a["interval_hours"] else [])
     # Profile picture: cached file, or fetchable because the account is connected. The UI falls back to the letter.
     version = instagram.avatar_version(a["id"])
     out["avatar_url"] = (f"/ui-api/accounts/{a['id']}/avatar?v={version or 0}"
@@ -418,7 +423,8 @@ def ui_account(account_id: int):
 
 def _save(body: AccountBody, account_id: int | None) -> dict:
     try:
-        scheduler.validate(body.schedule_mode, body.posting_times, body.interval_hours, body.interval_start)
+        scheduler.validate(body.schedule_mode, body.posting_times, body.interval_hours, body.interval_start,
+                           body.interval_hours_max)
     except ValueError as e:
         raise HTTPException(400, str(e))
     start = ""
@@ -427,7 +433,8 @@ def _save(body: AccountBody, account_id: int | None) -> dict:
         start = f"{hh:02d}:{mm:02d}"
     data = {"name": body.name.strip(), "ig_user_id": body.ig_user_id.strip(),
             "posting_times": body.posting_times.strip(), "schedule_mode": body.schedule_mode,
-            "interval_hours": round(body.interval_hours, 2), **({"interval_start": start} if start else {}), "caption_template": body.caption_template.replace("\r\n", "\n"),
+            "interval_hours": round(body.interval_hours, 2),
+            "interval_hours_max": round(body.interval_hours_max, 2) if body.interval_hours_max > body.interval_hours else 0, **({"interval_start": start} if start else {}), "caption_template": body.caption_template.replace("\r\n", "\n"),
             "hashtags": body.hashtags.strip(), "hook_enabled": int(body.hook_enabled)}
     if body.access_token.strip():
         # Pasted manually: expiry unknown

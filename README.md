@@ -55,6 +55,10 @@ Graph API posten. n8n ist dafür nicht nötig.
 
 * **Veröffentlichung**: entweder *Feste Uhrzeiten* (täglich) oder *Alle X Stunden* ab einer
   Startzeit (0,5–168 h). Der Rhythmus läuft über Mitternacht weiter.
+  Mit **Zufälliger Abstand** wird daraus ein Bereich, z. B. 6–8 h: nach jedem Post kommt der
+  nächste irgendwann in diesem Bereich (minutengenau). Die Zeitpunkte sind pseudo-zufällig, aber
+  fest und schon Tage im Voraus bekannt, damit die Render-Planung sie früh einplanen kann. Sie
+  stehen im Kalender, im Render-Plan und unter den Eingabefeldern.
 * **Render-Planung**: Für jede kommende Posting-Zeit wird ein Render-Block reserviert, der
   `RENDER_LEAD_MINUTES` (15) vor dem Posten fertig ist. Die Blöcke werden rückwärts von der
   letzten Posting-Zeit verteilt und überlappen nie, auch nicht zwischen Accounts: der Mini-PC

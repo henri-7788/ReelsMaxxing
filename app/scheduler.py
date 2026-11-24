@@ -4,6 +4,9 @@ A slot is due when its time has passed, it is not older than SLOT_WINDOW_MINUTES
 it is running/published yet. The built-in autopilot (app/autopilot.py) renders ahead of the slots;
 with AUTOMATION=n8n the old way still works: n8n asks /api/due every ~15 minutes.
 """
+import bisect
+import hashlib
+import threading
 import math
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -48,7 +51,8 @@ def parse_time(raw: str) -> tuple[int, int]:
     return times[0]
 
 
-def validate(mode: str, posting_times: str, interval_hours: float, interval_start: str) -> None:
+def validate(mode: str, posting_times: str, interval_hours: float, interval_start: str,
+             interval_hours_max: float = 0) -> None:
     """Raises ValueError with a message for the UI."""
     if mode not in MODES:
         raise ValueError("Unbekannter Zeitplan")
@@ -57,6 +61,19 @@ def validate(mode: str, posting_times: str, interval_hours: float, interval_star
         if not (MIN_INTERVAL_HOURS <= interval_hours <= MAX_INTERVAL_HOURS):
             raise ValueError(f"Abstand muss zwischen {MIN_INTERVAL_HOURS:g} und {MAX_INTERVAL_HOURS} Stunden liegen")
         parse_time(interval_start)
+        if interval_hours_max and not (interval_hours <= interval_hours_max <= MAX_INTERVAL_HOURS):
+            raise ValueError(f"Bereich: „bis“ muss zwischen {interval_hours:g} und {MAX_INTERVAL_HOURS} Stunden liegen")
+
+
+def random_gap(account_id, after: datetime, lo: float, hi: float) -> timedelta:
+    """Gap after the slot `after`, somewhere in [lo, hi] hours, in whole minutes.
+
+    Pseudo-random but fixed: the same account, slot and range always give the same gap. So every
+    future posting time is known in advance and the render plan can be made days ahead.
+    """
+    seed = f"{account_id}|{after:%Y-%m-%d %H:%M}|{lo:g}|{hi:g}".encode()
+    frac = int.from_bytes(hashlib.sha256(seed).digest()[:8], "big") / 2**64
+    return timedelta(minutes=round((lo + frac * (hi - lo)) * 60))
 
 
 def slot_key(dt: datetime) -> str:
@@ -65,6 +82,24 @@ def slot_key(dt: datetime) -> str:
 
 def parse_slot(key: str) -> datetime:
     return datetime.strptime(key, "%Y-%m-%d %H:%M").replace(tzinfo=tz())
+
+
+_chains: dict[tuple, list[datetime]] = {}
+_chains_lock = threading.Lock()
+
+
+def _random_chain(account_id, start: str, lo: float, hi: float, since: datetime, until: datetime) -> list[datetime]:
+    """Posting times with random gaps in [since, until) (wall-clock, naive), counted from the anchor.
+
+    Walked once from the anchor and cached, so the plan (checked every few seconds) stays cheap.
+    """
+    hh, mm = parse_time(start)
+    key = (account_id, hh, mm, lo, hi)
+    with _chains_lock:
+        chain = _chains.setdefault(key, [INTERVAL_ANCHOR.replace(hour=hh, minute=mm)])
+        while chain[-1] < until:
+            chain.append(chain[-1] + random_gap(account_id, chain[-1], lo, hi))
+        return chain[bisect.bisect_left(chain, since):bisect.bisect_left(chain, until)]
 
 
 def slots_between(account: dict, start: datetime, end: datetime) -> list[datetime]:
@@ -76,8 +111,12 @@ def slots_between(account: dict, start: datetime, end: datetime) -> list[datetim
     a, b = start.astimezone(zone).replace(tzinfo=None), end.astimezone(zone).replace(tzinfo=None)
     out: list[datetime] = []
     try:
-        if account.get("schedule_mode") == "interval":
-            step = timedelta(hours=float(account.get("interval_hours") or 0))
+        lo = float(account.get("interval_hours") or 0)
+        hi = float(account.get("interval_hours_max") or 0)
+        if account.get("schedule_mode") == "interval" and hi > lo >= MIN_INTERVAL_HOURS:
+            out.extend(_random_chain(account.get("id"), account.get("interval_start") or "00:00", lo, hi, a, b))
+        elif account.get("schedule_mode") == "interval":
+            step = timedelta(hours=lo)
             if step < timedelta(hours=MIN_INTERVAL_HOURS):
                 return []
             hh, mm = parse_time(account.get("interval_start") or "00:00")
