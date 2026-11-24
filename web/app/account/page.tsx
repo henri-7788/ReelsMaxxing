@@ -14,13 +14,13 @@ import { StartRun } from "@/components/StartRun"
 import { ConfirmDialog } from "@/components/ui/ConfirmDialog"
 import { AccountAvatar, Card, CardHeader, ErrorState, Menu, Segmented, Skeleton, Switch, TonePill } from "@/components/ui/kit"
 import { useToast } from "@/components/ui/Toast"
-import { accountBody, api, formatSlot, intervalTimes, parseTimes, scheduleLabel, setWorkflow, tokenDaysLeft, trend, type Account, type Plan, type Post, type ScheduleMode, type Source, type Stats } from "@/lib/api"
+import { accountBody, api, dayKey, formatSlot, intervalTimes, parseTimes, scheduleLabel, setWorkflow, tokenDaysLeft, trend, type Account, type Plan, type Post, type ScheduleMode, type Source, type Stats } from "@/lib/api"
 import { useApi, useData } from "@/lib/data"
 import type { Preset } from "@/lib/overlay"
 
 type Form = ReturnType<typeof accountBody>
 type Tab = "overview" | "content" | "editor" | "schedule" | "history"
-const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: false, posting_times: "18:00", schedule_mode: "times", interval_hours: 6, interval_start: "08:00", caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
+const EMPTY: Form = { name: "", ig_user_id: "", access_token: "", active: false, posting_times: "18:00", schedule_mode: "times", interval_hours: 6, interval_start: "08:00", interval_hours_max: 0, caption_template: "{title}\n\n🎥 Credit: u/{author} on r/{subreddit}\n{hashtags}", hashtags: "", hook_enabled: true }
 const PLACEHOLDERS = ["{title}", "{author}", "{subreddit}", "{permalink}", "{hashtags}"]
 
 function Panel({ title, sub, children }: { title: string; sub?: string; children: ReactNode }) {
@@ -63,25 +63,51 @@ function TimeChips({ value, onChange }: { value: string; onChange: (v: string) =
   )
 }
 
-function IntervalFields({ hours, start, onHours, onStart }: { hours: number; start: string; onHours: (v: number) => void; onStart: (v: string) => void }) {
-  const today = intervalTimes(hours, start)
+function IntervalFields({ hours, max, start, onHours, onMax, onStart, upcoming, unsaved }: {
+  hours: number; max: number; start: string; onHours: (v: number) => void; onMax: (v: number) => void; onStart: (v: string) => void
+  /** Saved random posting times from the server (random gaps cannot be computed here) */
+  upcoming: string[]; unsaved: boolean
+}) {
+  const random = max > 0
+  const fixed = intervalTimes(hours, start)
+  const fmt = (n: number) => String(n).replace(".", ",")
   return (
     <div className="flex flex-col gap-3">
+      <Switch checked={random} onChange={(v) => onMax(v ? Math.min(168, hours + 2) : 0)}>Zufälliger Abstand (Bereich)</Switch>
       <div className="flex flex-wrap items-end gap-3">
         <label className="label w-32">
-          Alle … Stunden
+          {random ? "Abstand von (h)" : "Alle … Stunden"}
           <input className="field tabular" type="number" min={0.5} max={168} step={0.5} value={hours} onChange={(e) => onHours(+e.target.value)} />
         </label>
+        {random && (
+          <label className="label w-32">
+            bis (h)
+            <input className="field tabular" type="number" min={hours} max={168} step={0.5} value={max} onChange={(e) => onMax(+e.target.value)} />
+          </label>
+        )}
         <label className="label w-36">
-          Beginnend um
+          {random ? "Erster Post um" : "Beginnend um"}
           <input className="field tabular" type="time" value={start} onChange={(e) => onStart(e.target.value)} />
         </label>
       </div>
-      <div className="flex flex-wrap gap-1.5" aria-label="Posting-Zeiten heute">
-        {today.length === 0 ? <span className="caption">Abstand zwischen 0,5 und 168 Stunden wählen.</span>
-          : today.map((t) => <span key={t} className="tag tabular">{t}</span>)}
-      </div>
-      <p className="hint">Der Rhythmus läuft über Mitternacht weiter{hours > 24 ? ", also nicht jeden Tag zur selben Zeit" : 24 % hours ? ", die Uhrzeiten verschieben sich daher von Tag zu Tag" : ""}. Oben die Zeiten von heute.</p>
+      {random ? (
+        <>
+          <div className="flex flex-wrap gap-1.5" aria-label="Nächste Posting-Zeiten">
+            {unsaved ? <span className="caption">Nach dem Speichern erscheinen hier die nächsten Zeiten.</span>
+              : upcoming.length === 0 ? <span className="caption">Keine Zeiten in den nächsten Tagen.</span>
+              : upcoming.slice(0, 8).map((t) => <span key={t} className="tag tabular">{formatSlot(t)}</span>)}
+          </div>
+          <p className="hint">Nach jedem Post kommt der nächste irgendwann {fmt(hours)} bis {fmt(max)} Stunden später. Die Zeitpunkte werden schon Tage im Voraus festgelegt, damit das Rendern früh eingeplant wird; im Kalender und im Render-Plan siehst du sie.</p>
+        </>
+      ) : (
+        <>
+          <div className="flex flex-wrap gap-1.5" aria-label="Posting-Zeiten heute">
+            {fixed.length === 0 ? <span className="caption">Abstand zwischen 0,5 und 168 Stunden wählen.</span>
+              : fixed.map((t) => <span key={t} className="tag tabular">{t}</span>)}
+          </div>
+          <p className="hint">Der Rhythmus läuft über Mitternacht weiter{hours > 24 ? ", also nicht jeden Tag zur selben Zeit" : 24 % hours ? ", die Uhrzeiten verschieben sich daher von Tag zu Tag" : ""}. Oben die Zeiten von heute.</p>
+        </>
+      )}
     </div>
   )
 }
@@ -323,7 +349,9 @@ export default function AccountPage() {
     <Panel title="Veröffentlichung" sub="Wann dieser Account ein Reel postet">
       <Segmented<ScheduleMode> label="Art" value={form.schedule_mode} onChange={(v) => set("schedule_mode", v)} options={[{ value: "times", label: "Feste Uhrzeiten" }, { value: "interval", label: "Alle X Stunden" }]} />
       {form.schedule_mode === "interval"
-        ? <IntervalFields hours={form.interval_hours} start={form.interval_start} onHours={(v) => set("interval_hours", v)} onStart={(v) => set("interval_start", v)} />
+        ? <IntervalFields hours={form.interval_hours} max={form.interval_hours_max} start={form.interval_start} onHours={(v) => set("interval_hours", v)} onMax={(v) => set("interval_hours_max", v)} onStart={(v) => set("interval_start", v)}
+            upcoming={(account?.upcoming_slots ?? []).filter((t) => t > dayKey(new Date()) + " " + new Date().toTimeString().slice(0, 5))}
+            unsaved={!account || form.interval_hours !== saved.interval_hours || form.interval_hours_max !== saved.interval_hours_max || form.interval_start !== saved.interval_start || form.schedule_mode !== saved.schedule_mode} />
         : <TimeChips value={form.posting_times} onChange={(v) => set("posting_times", v)} />}
     </Panel>
   )
@@ -471,7 +499,7 @@ export default function AccountPage() {
             {schedule}
             <RenderPlanCard accountId={account.id} active={account.active} />
           </div>
-          <PostingTimesCard accountId={account.id} account={{ ...account, posting_times: form.posting_times, schedule_mode: form.schedule_mode, interval_hours: form.interval_hours, interval_start: form.interval_start }} className="col-span-12 xl:col-span-7" />
+          <PostingTimesCard accountId={account.id} account={{ ...account, posting_times: form.posting_times, schedule_mode: form.schedule_mode, interval_hours: form.interval_hours, interval_start: form.interval_start, interval_hours_max: form.interval_hours_max }} className="col-span-12 xl:col-span-7" />
         </div>
       )}
 

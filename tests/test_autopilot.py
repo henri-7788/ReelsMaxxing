@@ -163,3 +163,32 @@ def test_api_interval_workflow_and_plan():
     assert plan["blocked"][0]["reason"] == "nicht mit Instagram verbunden"
     # The built-in autopilot posts: n8n gets nothing to do
     assert c.get("/api/due", headers={"X-API-Key": "test-key"}).json() == {"due": []}
+
+
+def test_random_interval_gaps_in_range_and_fixed_ahead():
+    acc = {"id": 7, "schedule_mode": "interval", "interval_hours": 6, "interval_hours_max": 8, "interval_start": "08:00"}
+    start, end = datetime(2026, 11, 24, 0, 0, tzinfo=TZ), datetime(2026, 12, 4, 0, 0, tzinfo=TZ)
+    got = scheduler.slots_between(acc, start, end)
+    gaps = {b - a for a, b in zip(got, got[1:])}
+    assert all(timedelta(hours=6) <= g <= timedelta(hours=8) for g in gaps)
+    assert len(gaps) > 3  # really random, not a fixed step
+    # Same answer every time (so renders can be planned days ahead), also for a window in the middle
+    assert scheduler.slots_between(acc, start, end) == got
+    mid = scheduler.slots_between(acc, datetime(2026, 11, 28, 0, 0, tzinfo=TZ), end)
+    assert mid == [t for t in got if t >= datetime(2026, 11, 28, 0, 0, tzinfo=TZ)]
+    # Other accounts get other times
+    assert scheduler.slots_between({**acc, "id": 8}, start, end) != got
+
+
+def test_validate_random_range():
+    scheduler.validate("interval", "", 6, "08:00", 8)
+    with pytest.raises(ValueError):
+        scheduler.validate("interval", "", 6, "08:00", 5)
+
+
+def test_plan_random_interval_planned_days_ahead():
+    account("R", schedule_mode="interval", interval_hours=6, interval_hours_max=8, interval_start="08:00")
+    plan = autopilot.plan(NOW)
+    slots = [r["slot"] for r in plan["renders"]]
+    assert len(slots) >= 3 and slots[-1] > "2026-11-25"  # 24 h ahead already fixed
+    assert all(r["state"] in ("planned", "late") for r in plan["renders"])

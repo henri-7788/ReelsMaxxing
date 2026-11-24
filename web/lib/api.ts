@@ -26,6 +26,10 @@ export type Account = {
   schedule_mode: ScheduleMode
   interval_hours: number
   interval_start: string
+  /** > interval_hours: random gap between the two ("every 6-8 hours"), 0 = fixed gap */
+  interval_hours_max: number
+  /** Random intervals only: posting times of today and the next two days, fixed in advance by the server */
+  upcoming_slots?: string[]
   /** When the workflow switch was last turned on (UTC ISO), "" if never */
   workflow_since: string
   caption_template: string
@@ -162,6 +166,7 @@ export function accountBody(a: Account, patch: Partial<Account> = {}) {
   return {
     name: m.name, ig_user_id: m.ig_user_id, access_token: "", active: m.active, posting_times: m.posting_times,
     schedule_mode: m.schedule_mode ?? "times", interval_hours: m.interval_hours ?? 6, interval_start: m.interval_start || "08:00",
+    interval_hours_max: m.interval_hours_max ?? 0,
     caption_template: m.caption_template, hashtags: m.hashtags, hook_enabled: m.hook_enabled,
   }
 }
@@ -217,12 +222,18 @@ export function intervalTimes(hours: number, start: string, day = new Date()): s
 }
 
 /** Posting times of an account on one day (HH:MM), for both modes. */
-export function dayTimes(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times">, day = new Date()): string[] {
+export const isRandomInterval = (a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_hours_max">) =>
+  a.schedule_mode === "interval" && (a.interval_hours_max ?? 0) > a.interval_hours
+
+export function dayTimes(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times" | "interval_hours_max" | "upcoming_slots">, day = new Date()): string[] {
+  if (isRandomInterval(a)) return (a.upcoming_slots ?? []).filter((s) => s.startsWith(dayKey(day))).map((s) => s.slice(11))
   return a.schedule_mode === "interval" ? intervalTimes(a.interval_hours, a.interval_start, day) : parseTimes(a.posting_times)
 }
 
-export function scheduleLabel(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times">): string {
-  if (a.schedule_mode === "interval") return `alle ${String(a.interval_hours).replace(".", ",")} h ab ${a.interval_start}`
+export function scheduleLabel(a: Pick<Account, "schedule_mode" | "interval_hours" | "interval_start" | "posting_times" | "interval_hours_max">): string {
+  const h = (n: number) => String(n).replace(".", ",")
+  if (isRandomInterval(a)) return `zufällig alle ${h(a.interval_hours)}–${h(a.interval_hours_max)} h`
+  if (a.schedule_mode === "interval") return `alle ${h(a.interval_hours)} h ab ${a.interval_start}`
   const t = parseTimes(a.posting_times)
   return t.length ? `täglich ${t.join(", ")}` : "keine Zeiten"
 }
